@@ -61,6 +61,13 @@ jobs:
               sys.exit(f'Trop peu de tests executes ({total})')
           EOF
 
+      - name: Check signing secrets
+        run: |
+          echo "alias: ${#RSSFABRICE_KEY_ALIAS} caractère(s)"
+          echo "keystore: ${#RSSFABRICE_KEYSTORE_B64} caractère(s) en base64"
+          test -n "$RSSFABRICE_KEY_ALIAS" || { echo "::error::secret RSSFABRICE_KEY_ALIAS vide"; exit 1; }
+          test -n "$RSSFABRICE_KEYSTORE_B64" || { echo "::error::secret RSSFABRICE_KEYSTORE_B64 vide"; exit 1; }
+
       - name: Build release APK
         run: ./gradlew assembleRelease --no-daemon
 

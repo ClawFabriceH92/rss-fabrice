@@ -9,7 +9,7 @@ plugins {
 }
 
 fun releaseKeystore(): File? {
-    System.getenv("RSSFABRICE_KEYSTORE_B64")?.let { b64 ->
+    System.getenv("RSSFABRICE_KEYSTORE_B64")?.takeIf { it.isNotBlank() }?.let { b64 ->
         return try {
             val tmp = File(System.getenv("RUNNER_TEMP") ?: "/tmp", "rssfabrice-release.keystore")
             tmp.writeBytes(Base64.getDecoder().decode(b64))
@@ -24,6 +24,10 @@ fun releaseKeystore(): File? {
     )
     return candidats.firstOrNull { it.exists() }
 }
+
+/** Une variable d'environnement vide (secret GitHub non renseigné) compte comme absente. */
+fun secret(nom: String, defaut: String): String =
+    System.getenv(nom)?.takeIf { it.isNotBlank() } ?: defaut
 
 android {
     namespace = "fr.fh.rss"
@@ -43,9 +47,9 @@ android {
         signingConfigs {
             create("release") {
                 storeFile = ks
-                storePassword = System.getenv("RSSFABRICE_KEYSTORE_PASSWORD") ?: "rssfabrice2026"
-                keyAlias = System.getenv("RSSFABRICE_KEY_ALIAS") ?: "rssfabrice"
-                keyPassword = System.getenv("RSSFABRICE_KEY_PASSWORD") ?: "rssfabrice2026"
+                storePassword = secret("RSSFABRICE_KEYSTORE_PASSWORD", "rssfabrice2026")
+                keyAlias = secret("RSSFABRICE_KEY_ALIAS", "rssfabrice")
+                keyPassword = secret("RSSFABRICE_KEY_PASSWORD", "rssfabrice2026")
             }
         }
     }

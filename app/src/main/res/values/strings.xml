@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RSS by Fabrice Heuvrard</string>
+    <string name="tous_articles">Tous les articles</string>
+    <string name="non_lus">Non lus</string>
+    <string name="lire_plus_tard">Lire plus tard</string>
+    <string name="rechercher">Rechercher</string>
+    <string name="reglages">Réglages</string>
+    <string name="ajouter_flux">Ajouter un flux</string>
+    <string name="dossiers">Dossiers</string>
+    <string name="sources">Sources</string>
+</resources>

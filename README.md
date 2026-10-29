@@ -1,0 +1,72 @@
+# RSS by Fabrice Heuvrard
+
+Application Android de veille RSS, alternative locale à Feedly : tout est
+stocké sur le téléphone, sans serveur à exploiter et sans publicité.
+
+Lot MVP du cahier des charges (oct. 2026).
+
+## Fonctions livrées en v1.0.0
+
+- Abonnement à un flux **RSS 2.0 / RDF, Atom ou JSON Feed** par URL.
+- **Détection automatique** du flux d'un site (balises `alternate`, puis
+  `/feed`, `/rss.xml`, `/atom.xml`, …).
+- Abonnement par **partage d'un lien** depuis le navigateur.
+- **Dossiers** illimités, déplacement des sources, compteurs de non-lus par
+  source, par dossier et au total.
+- **Import et export OPML** (dossiers conservés, attributs en minuscules
+  tolérés). Un OPML de 300 sources s'importe sans attendre 300 requêtes.
+- Trois vues : **liste, cartes, magazine**. Thème clair, sombre ou système.
+- Lecteur intégré : HTML nettoyé, **JavaScript désactivé**, images en
+  `https`, liens ouverts dans le navigateur externe.
+- Lu / non lu, « lire plus tard » (favoris), **balayage** vers la droite pour
+  basculer le statut, ouverture directe dans le navigateur, partage.
+- **Collecte à chaque lancement**, actualisation manuelle (tirer pour
+  actualiser ou bouton), et **collecte périodique optionnelle** de 15 min à
+  24 h (WorkManager, Wi-Fi uniquement possible, batterie faible exclue).
+- **Recherche plein texte** (SQLite FTS4) sur les titres et le texte des
+  articles.
+- **Lecture hors connexion** : le texte intégral est conservé localement, avec
+  plafond d'archive réglable (5 000 à 100 000 articles).
+- Requêtes conditionnelles (`ETag`, `If-Modified-Since`) et User-Agent
+  identifiable, comme demandé dans les exigences non fonctionnelles.
+- **Mise à jour intégrée** : l'application lit la release GitHub `latest`
+  (manifeste `version.json` puis API), télécharge l'APK et propose
+  l'installation.
+
+## Architecture
+
+| Couche | Choix |
+| --- | --- |
+| Langage | Kotlin 2.0, coroutines + Flow |
+| Interface | Jetpack Compose, Material 3 |
+| Architecture | MVVM, injection manuelle (`AppContainer`) |
+| Base locale | Room 2.6 (SQLite) + table FTS4 |
+| Réglages | DataStore Preferences |
+| Tâches de fond | WorkManager (période minimale 15 min) |
+| Réseau | OkHttp, 4 collectes en parallèle |
+| Analyse | jsoup (XML tolérant + HTML), `org.json` (JSON Feed) |
+
+Le dépôt `FeedRepository` ne dépend pas d'Android : l'analyse des flux, l'OPML
+et la recherche sont testés sur JVM.
+
+## Tests
+
+```bash
+./gradlew testDebugUnitTest          # 32 tests, dont l'analyse RSS/Atom/JSON,
+                                     # l'OPML, la détection de flux, l'extraction
+                                     # du texte, la mise à jour et un garde-fou
+                                     # sur res/xml/file_paths.xml
+./gradlew assembleRelease            # APK signé
+```
+
+## Signature et mise à jour
+
+Le keystore de release vit hors du dépôt (`/root/.secrets/keystores-android/`)
+et ses quatre valeurs sont passées en secrets GitHub. **Toute nouvelle version
+doit être signée avec la même clé**, sinon l'installation par-dessus échoue.
+
+Le dépôt doit rester **public** : les assets d'une release privée répondent 404
+sans authentification, et l'application n'a pas de jeton.
+
+Avant chaque livraison : incrémenter `versionCode` et `versionName` dans
+`app/build.gradle.kts`.

@@ -378,7 +378,7 @@ private fun ContenuTiroir(
             )
         }
 
-        LazyColumn(Modifier.fillMaxWidth()) {
+        LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
             item {
                 NavigationDrawerItem(
                     label = { Text("Tous les articles") },

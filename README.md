@@ -97,6 +97,20 @@ Le menu **⋮** de la liste d'articles propose **Tout marquer comme lu** et
 **Tout réessayer les flux en erreur** : ces actions ne sont plus seulement dans
 le tiroir.
 
+## Lecture et doublons (v1.5.0)
+
+- **Se désabonner depuis l'article** : menu ⋮ du lecteur, confirmation explicite,
+  puis retour à l'accueil ; la source et ses articles déjà téléchargés sont
+  retirés de l'app (le site du flux n'est pas touché).
+- **Doublons masqués** : un même article publié par plusieurs sources
+  n'apparaît qu'une fois dans la liste (même adresse après nettoyage des
+  paramètres de traçage, ou même titre significatif d'au moins 20 caractères,
+  préfixes `AFP`, `DIRECT :` ignorés). `Regroupement.dedoublonner` est testé sur
+  JVM ; l'onglet IA garde la liste brute pour afficher qui a publié quoi.
+- **Couleurs de lecture** : fond orange clair pour un article non lu, vert clair
+  une fois lu (teintes adaptées au thème sombre), en liste comme en cartes.
+- **Bascule Tous / Non lus** en haut de la liste, avec le compteur de non lus.
+
 ## Signature et mise à jour
 
 Le keystore de release vit hors du dépôt (`/root/.secrets/keystores-android/`)

@@ -68,6 +68,76 @@ object Regroupement {
     /** Nombre de dépêches en double repérées dans le lot. */
     fun nombreDoublons(groupes: List<Groupe>): Int = groupes.count { it.doublon }
 
+    // ------------------------------------------------------------- doublons
+
+    /**
+     * Un titre plus court que ça est trop générique pour servir de clé : deux
+     * « Édito » de deux journaux différents ne sont pas le même article.
+     */
+    const val LONGUEUR_TITRE_CLE = 20
+
+    /** Paramètres d'URL qui ne changent pas l'article visé (traçage). */
+    private val PARAMETRES_IGNORES = setOf(
+        "fbclid", "gclid", "xtor", "ref", "source", "campaign", "at_medium",
+        "at_campaign", "at_custom1", "at_custom2", "mtm_campaign", "mtm_source",
+    )
+
+    /**
+     * Adresse ramenée à ce qui identifie l'article : sans schéma, sans `www.`,
+     * sans ancre ni paramètre de traçage, paramètres restants triés.
+     */
+    fun cleUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        val sansFragment = url.trim().lowercase().substringBefore('#')
+        val base = sansFragment.substringBefore('?')
+            .removePrefix("https://")
+            .removePrefix("http://")
+            .removePrefix("www.")
+            .trimEnd('/')
+        if (base.isBlank()) return null
+        val parametres = sansFragment.substringAfter('?', "")
+            .split('&')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .filter { p ->
+                val nom = p.substringBefore('=')
+                nom !in PARAMETRES_IGNORES && !nom.startsWith("utm_")
+            }
+            .sorted()
+        return if (parametres.isEmpty()) base else base + "?" + parametres.joinToString("&")
+    }
+
+    /**
+     * Retire les articles déjà vus, en gardant la première occurrence (la liste
+     * est triée du plus récent au plus ancien).
+     *
+     * Deux articles sont considérés identiques s'ils pointent vers la même
+     * adresse, ou s'ils portent le même titre significatif (assez long pour ne
+     * pas être un intitulé générique). Un article sans adresse ni titre
+     * exploitable est toujours conservé.
+     */
+    fun dedoublonner(
+        articles: List<fr.fh.rss.data.db.ArticleEntity>,
+    ): List<fr.fh.rss.data.db.ArticleEntity> {
+        val vues = HashSet<String>()
+        val gardes = ArrayList<fr.fh.rss.data.db.ArticleEntity>(articles.size)
+        for (article in articles) {
+            val cles = buildList {
+                cleUrl(article.url)?.let { add("url:$it") }
+                val titre = normaliserTitre(article.title)
+                if (titre.length >= LONGUEUR_TITRE_CLE) add("titre:$titre")
+            }
+            if (cles.isEmpty()) {
+                gardes.add(article)
+                continue
+            }
+            if (cles.any { it in vues }) continue
+            vues.addAll(cles)
+            gardes.add(article)
+        }
+        return gardes
+    }
+
     // ----------------------------------------------------------------- thèmes
 
     /**

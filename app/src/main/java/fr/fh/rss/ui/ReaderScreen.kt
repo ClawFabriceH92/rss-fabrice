@@ -13,10 +13,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -25,9 +28,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -47,7 +56,10 @@ fun EcranLecteur(
     vm: MainViewModel,
     articleId: Long,
     onRetour: () -> Unit,
+    onDesabonnement: (Long) -> Unit = {},
 ) {
+    var menuActions by remember { mutableStateOf(false) }
+    var confirmationDesabo by remember { mutableStateOf(false) }
     val article by vm.observerArticle(articleId).collectAsState(initial = null)
     val sources by vm.sources.collectAsState()
     val resumes by vm.resumes.collectAsState()
@@ -133,6 +145,38 @@ fun EcranLecteur(
                         },
                     ) {
                         Icon(Icons.Default.Share, contentDescription = "Partager")
+                    }
+                    // Se désabonner depuis l'article : on lit un article dont on
+                    // ne veut plus, sans devoir retrouver la source dans le tiroir.
+                    Box {
+                        IconButton(onClick = { menuActions = true }) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = "Plus d'actions",
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuActions,
+                            onDismissRequest = { menuActions = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "Se désabonner de « ${source.ifBlank { "ce flux" }} »",
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.NotificationsOff,
+                                        contentDescription = null,
+                                    )
+                                },
+                                onClick = {
+                                    menuActions = false
+                                    confirmationDesabo = true
+                                },
+                            )
+                        }
                     }
                 },
             )
@@ -230,6 +274,37 @@ fun EcranLecteur(
                 }
             }
         }
+    }
+
+    if (confirmationDesabo) {
+        AlertDialog(
+            onDismissRequest = { confirmationDesabo = false },
+            title = { Text("Se désabonner ?") },
+            text = {
+                Text(
+                    if (source.isBlank()) {
+                        "Le flux et les articles déjà téléchargés seront retirés " +
+                            "de l'application."
+                    } else {
+                        "« $source » et ses articles déjà téléchargés seront retirés " +
+                            "de l'application. Le site du flux n'est pas modifié."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmationDesabo = false
+                        onDesabonnement(courant.feedId)
+                    },
+                ) {
+                    Text("Se désabonner", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmationDesabo = false }) { Text("Annuler") }
+            },
+        )
     }
 }
 

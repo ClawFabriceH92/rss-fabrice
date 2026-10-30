@@ -53,6 +53,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -92,6 +93,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -114,6 +116,22 @@ sealed interface Ecran {
 
 /** Vert de l'onglet IA quand le serveur local répond (partagé avec les réglages). */
 internal val VertIa = Color(0xFF2E9E4F)
+
+/**
+ * Fond d'un article dans la liste : orange clair tant qu'il n'est pas lu, vert
+ * clair une fois lu. Deux teintes franches mais douces, déclinées pour le thème
+ * sombre afin de rester lisibles.
+ */
+@Composable
+internal fun fondArticle(lu: Boolean): Color {
+    val sombre = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    return when {
+        lu && sombre -> Color(0xFF1B3A25)
+        lu -> Color(0xFFDDF0E1)
+        sombre -> Color(0xFF3B2A10)
+        else -> Color(0xFFFFE7C7)
+    }
+}
 
 /**
  * Couleur de l'onglet IA : vert si le serveur Ollama répond à l'API, rouge
@@ -148,6 +166,7 @@ fun AppRoot(
     val portee = rememberCoroutineScope()
 
     val articles by vm.articles.collectAsState()
+    val articlesAffiches by vm.articlesAffiches.collectAsState()
     val selection by vm.selection.collectAsState()
     val sources by vm.sources.collectAsState()
     val dossiers by vm.dossiers.collectAsState()
@@ -426,21 +445,62 @@ fun AppRoot(
         ) { marges ->
             Box(Modifier.padding(marges)) {
                 when (val courant = ecran) {
-                    Ecran.Liste -> ZoneArticles(
-                        articles = articles,
-                        titres = titres,
-                        vue = reglages.vue,
-                        enCours = enCours,
-                        onRafraichir = { vm.rafraichir() },
-                        onOuvrir = { ecran = Ecran.Lecteur(it.id) },
-                        onBasculerLu = { vm.basculerLu(it) },
-                        onFavori = { vm.basculerFavori(it) },
-                    )
+                    Ecran.Liste -> Column(Modifier.fillMaxSize()) {
+                        // Bascule « tous / non lus » à portée de pouce : le
+                        // filtre existait seulement dans le tiroir.
+                        if (selection.filtre == Filtre.Tous || selection.filtre == Filtre.NonLus) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(start = 12.dp, top = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                FilterChip(
+                                    selected = selection.filtre == Filtre.Tous,
+                                    onClick = {
+                                        vm.changerSelection(Selection(Filtre.Tous, "Tous les articles"))
+                                    },
+                                    label = { Text("Tous") },
+                                )
+                                FilterChip(
+                                    selected = selection.filtre == Filtre.NonLus,
+                                    onClick = {
+                                        vm.changerSelection(Selection(Filtre.NonLus, "Non lus"))
+                                    },
+                                    label = {
+                                        Text(
+                                            if (nonLusTotal > 0) "Non lus ($nonLusTotal)"
+                                            else "Non lus",
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                        Box(Modifier.weight(1f)) {
+                            ZoneArticles(
+                                articles = articlesAffiches,
+                                titres = titres,
+                                vue = reglages.vue,
+                                enCours = enCours,
+                                onRafraichir = { vm.rafraichir() },
+                                onOuvrir = { ecran = Ecran.Lecteur(it.id) },
+                                onBasculerLu = { vm.basculerLu(it) },
+                                onFavori = { vm.basculerFavori(it) },
+                            )
+                        }
+                    }
 
                     is Ecran.Lecteur -> EcranLecteur(
                         vm = vm,
                         articleId = courant.articleId,
                         onRetour = { ecran = Ecran.Liste },
+                        onDesabonnement = { feedId ->
+                            // Supprimer la source retire aussi ses articles :
+                            // la liste d'accueil se met à jour d'elle-même
+                            // (Room), et on revient dessus.
+                            vm.supprimerFlux(feedId)
+                            vm.changerSelection(Selection(Filtre.Tous, "Tous les articles"))
+                            ecran = Ecran.Liste
+                        },
                     )
 
                     Ecran.Ia -> EcranIa(
@@ -959,7 +1019,7 @@ private fun LigneBalayable(
     ) {
         // Fond opaque obligatoire : sans lui, le calque du balayage se voit
         // sous chaque ligne (vécu v1.0.0 : écran entier orange).
-        Box(Modifier.background(MaterialTheme.colorScheme.background)) {
+        Box(Modifier.background(fondArticle(article.isRead))) {
             LigneArticle(article, source, withImage, onOuvrir, onFavori)
         }
     }
@@ -1056,10 +1116,7 @@ private fun CarteArticle(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (article.isRead) MaterialTheme.colorScheme.surfaceVariant
-            else MaterialTheme.colorScheme.surface,
-        ),
+        colors = CardDefaults.cardColors(containerColor = fondArticle(article.isRead)),
     ) {
         // Bandeau toujours présent, pleine largeur : avec l'image du flux quand
         // il y en a une, sinon un aplat discret avec le nom de la source. C'est

@@ -70,6 +70,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /**
+     * Liste affichée dans l'accueil : un même article publié par plusieurs
+     * sources n'apparaît qu'une fois. `articles` reste la liste brute, dont
+     * l'onglet IA a besoin pour montrer qui a publié quoi.
+     */
+    val articlesAffiches: StateFlow<List<ArticleEntity>> = articles
+        .map { fr.fh.rss.data.Regroupement.dedoublonner(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     private val _enCours = MutableStateFlow(false)
     val enCours: StateFlow<Boolean> = _enCours.asStateFlow()
 

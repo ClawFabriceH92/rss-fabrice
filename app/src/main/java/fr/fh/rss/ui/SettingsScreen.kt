@@ -26,6 +26,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -39,14 +41,26 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import fr.fh.rss.BuildConfig
 import fr.fh.rss.data.Reglages
+import fr.fh.rss.data.db.FeedEntity
 import fr.fh.rss.update.UpdateManager
 
+/**
+ * Paramétrage de l'application, organisé en deux onglets.
+ *
+ * Le second onglet reprend la liste des flux en erreur : elle était accessible
+ * par un écran séparé, il fallait penser à ouvrir le tiroir pour la trouver.
+ * Ici elle est à côté des réglages, au même endroit que le reste de la
+ * configuration.
+ */
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun EcranReglages(
     vm: MainViewModel,
     reglages: Reglages,
     nombreSources: Int,
+    sourcesEnEchec: List<FeedEntity> = emptyList(),
+    onglet: Int = 0,
+    onOnglet: (Int) -> Unit = {},
     modelesOllama: List<String> = emptyList(),
     etatOllama: String? = null,
 ) {
@@ -68,7 +82,40 @@ fun EcranReglages(
 
     // Pas de Scaffold ni de barre ici : celle de l'écran principal porte déjà le
     // titre « Réglages » et la flèche de retour (sinon le mot s'affiche deux fois).
-    LazyColumn(Modifier.fillMaxWidth()) {
+    Column(Modifier.fillMaxWidth()) {
+        TabRow(selectedTabIndex = onglet) {
+            Tab(
+                selected = onglet == 0,
+                onClick = { onOnglet(0) },
+                text = { Text("Réglages") },
+            )
+            Tab(
+                selected = onglet == 1,
+                onClick = { onOnglet(1) },
+                text = {
+                    Text(
+                        if (sourcesEnEchec.isEmpty()) "Flux en erreur"
+                        else "Flux en erreur (${sourcesEnEchec.size})",
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                },
+            )
+        }
+
+        if (onglet == 1) {
+            Column(Modifier.fillMaxWidth().weight(1f)) {
+                EcranSourcesEnEchec(
+                    sources = sourcesEnEchec,
+                    onReessayer = { vm.reessayerSource(it) },
+                    onReessayerTout = { ids -> vm.reessayerToutesLesSources(ids) },
+                    onSupprimer = { vm.supprimerFlux(it) },
+                )
+            }
+            return@Column
+        }
+
+        LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
 
             item { Titre("Collecte") }
 
@@ -199,7 +246,11 @@ fun EcranReglages(
                         Text(
                             etatOllama,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = if (etatOllama.startsWith("Injoignable")) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                VertIa
+                            },
                             modifier = Modifier.padding(top = 6.dp),
                         )
                     }
@@ -292,6 +343,7 @@ fun EcranReglages(
                     modifier = Modifier.padding(16.dp),
                 )
             }
+        }
     }
 }
 

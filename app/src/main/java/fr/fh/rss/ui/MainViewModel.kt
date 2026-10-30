@@ -101,6 +101,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _ollamaEtat = MutableStateFlow<String?>(null)
     val ollamaEtat: StateFlow<String?> = _ollamaEtat.asStateFlow()
 
+    /**
+     * Disponibilité du serveur Ollama : `null` tant qu'aucun test n'a eu lieu,
+     * `true` si le serveur répond à l'API, `false` sinon. Sert à colorer
+     * l'onglet IA en vert ou en rouge.
+     */
+    private val _iaDisponible = MutableStateFlow<Boolean?>(null)
+    val iaDisponible: StateFlow<Boolean?> = _iaDisponible.asStateFlow()
+
     private var collecteFaite = false
 
     // ------------------------------------------------------------ actions
@@ -385,6 +393,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _synthese.value = null
     }
 
+    /**
+     * Teste le serveur Ollama en silence (pas de message, pas de liste de
+     * modèles) : seul l'indicateur de l'onglet IA change.
+     */
+    fun verifierIa() {
+        viewModelScope.launch {
+            val courant = reglages.value
+            val disponible = runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    ollama.modeles(courant.ollamaUrl)
+                }
+            }.isSuccess
+            _iaDisponible.value = disponible
+        }
+    }
+
     /** Test de connexion au serveur Ollama et liste des modèles installés. */
     fun testerOllama() {
         viewModelScope.launch {
@@ -395,6 +419,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }.onSuccess { liste ->
                 _modelesOllama.value = liste
+                _iaDisponible.value = true
                 _ollamaEtat.value = if (liste.isEmpty()) {
                     "Serveur joignable, aucun modèle installé"
                 } else {
@@ -407,6 +432,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }.onFailure { erreur ->
                 _modelesOllama.value = emptyList()
+                _iaDisponible.value = false
                 val detail = erreur.message ?: "injoignable"
                 _ollamaEtat.value = "Injoignable : $detail"
                 _message.value = "Ollama injoignable : $detail"

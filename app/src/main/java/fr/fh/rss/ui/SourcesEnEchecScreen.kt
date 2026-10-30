@@ -25,11 +25,11 @@ import fr.fh.rss.data.EtatSource
 import fr.fh.rss.data.db.FeedEntity
 
 /**
- * Écran dédié aux sources qui ne répondent plus.
+ * Liste des flux qui ne répondent plus, affichée dans l'onglet « Flux en erreur »
+ * du paramétrage (et atteignable par le tiroir, avec le compteur en pastille).
  *
- * Il a son propre écran : dans les réglages il fallait faire défiler toute la
- * page pour atteindre la liste. Rien n'est supprimé automatiquement, et une
- * source n'est signalée « à examiner » qu'après le seuil d'échecs consécutifs.
+ * Rien n'est supprimé automatiquement, et une source n'est signalée « à
+ * examiner » qu'après le seuil d'échecs consécutifs.
  */
 @Composable
 fun EcranSourcesEnEchec(

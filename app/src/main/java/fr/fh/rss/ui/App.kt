@@ -54,7 +54,6 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -87,6 +86,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -104,13 +104,26 @@ import fr.fh.rss.data.db.FolderEntity
 import fr.fh.rss.data.model.RefreshSummary
 import kotlinx.coroutines.launch
 
-/** Écrans de l'application (pas de bibliothèque de navigation : trois états suffisent). */
+/** Écrans de l'application (pas de bibliothèque de navigation : quelques états suffisent). */
 sealed interface Ecran {
     data object Liste : Ecran
     data class Lecteur(val articleId: Long) : Ecran
     data object Ia : Ecran
-    data object SourcesEnEchec : Ecran
     data object Reglages : Ecran
+}
+
+/** Vert de l'onglet IA quand le serveur local répond (partagé avec les réglages). */
+internal val VertIa = Color(0xFF2E9E4F)
+
+/**
+ * Couleur de l'onglet IA : vert si le serveur Ollama répond à l'API, rouge
+ * sinon, teinte neutre tant qu'aucun test n'a eu lieu.
+ */
+@Composable
+private fun teinteIa(disponible: Boolean?): Color = when (disponible) {
+    true -> VertIa
+    false -> MaterialTheme.colorScheme.error
+    null -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -122,6 +135,9 @@ fun AppRoot(
 ) {
     val contexte = LocalContext.current
     var ecran by remember { mutableStateOf<Ecran>(Ecran.Liste) }
+    // Onglet du paramétrage : 0 = réglages, 1 = flux en erreur.
+    var ongletReglages by rememberSaveable { mutableStateOf(0) }
+    var menuListe by remember { mutableStateOf(false) }
     var rechercheOuverte by remember { mutableStateOf(false) }
     var texteRecherche by remember { mutableStateOf("") }
     var dialogueAjout by remember { mutableStateOf(false) }
@@ -148,6 +164,7 @@ fun AppRoot(
     val resumes by vm.resumes.collectAsState()
     val resumeEnCours by vm.resumeEnCours.collectAsState()
     val modelesOllama by vm.modelesOllama.collectAsState()
+    val iaDisponible by vm.iaDisponible.collectAsState()
     val bilan by vm.dernierBilan.collectAsState()
     var bilanVisible by remember { mutableStateOf(false) }
 
@@ -166,6 +183,10 @@ fun AppRoot(
     val titres = remember(sources) { sources.associate { it.id to it.title } }
 
     LaunchedEffect(Unit) { vm.rafraichirAuLancement() }
+
+    // L'onglet IA indique si le serveur Ollama répond : on teste au lancement et
+    // à chaque changement d'adresse.
+    LaunchedEffect(reglages.ollamaUrl) { vm.verifierIa() }
 
     LaunchedEffect(lienExterne) {
         if (!lienExterne.isNullOrBlank()) {
@@ -219,13 +240,16 @@ fun AppRoot(
                     onSupprimer = { vm.supprimerFlux(it.id) },
                     onMarquerToutLu = { vm.marquerToutLu() },
                     onReglages = {
+                        ongletReglages = 0
                         ecran = Ecran.Reglages
                         portee.launch { tiroir.close() }
                     },
                     nombreSourcesEnEchec = sources.count { !it.lastError.isNullOrBlank() },
-                    selectionneSourcesEnEchec = ecran == Ecran.SourcesEnEchec,
+                    selectionneSourcesEnEchec = ecran == Ecran.Reglages && ongletReglages == 1,
                     onSourcesEnEchec = {
-                        ecran = Ecran.SourcesEnEchec
+                        // Les flux en erreur sont désormais un onglet du paramétrage.
+                        ongletReglages = 1
+                        ecran = Ecran.Reglages
                         portee.launch { tiroir.close() }
                     },
                 )
@@ -271,9 +295,9 @@ fun AppRoot(
                         title = {
                             Text(
                                 when (ecran) {
-                                    is Ecran.Reglages -> "Réglages"
+                                    is Ecran.Reglages ->
+                                        if (ongletReglages == 1) "Flux en erreur" else "Paramétrage"
                                     is Ecran.Ia -> "IA"
-                                    is Ecran.SourcesEnEchec -> "Sources en échec"
                                     else -> selection.titre
                                 },
                                 maxLines = 1,
@@ -299,11 +323,54 @@ fun AppRoot(
                                 IconButton(onClick = { vm.rafraichir() }) {
                                     Icon(Icons.Default.Refresh, contentDescription = "Actualiser")
                                 }
-                                IconButton(onClick = { ecran = Ecran.Reglages }) {
+                                // Les actions globales étaient enfouies dans le
+                                // tiroir : elles sont aussi ici, à portée de pouce.
+                                Box {
+                                    IconButton(onClick = { menuListe = true }) {
+                                        Icon(
+                                            Icons.Default.MoreVert,
+                                            contentDescription = "Plus d'actions",
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = menuListe,
+                                        onDismissRequest = { menuListe = false },
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Tout marquer comme lu") },
+                                            leadingIcon = {
+                                                Icon(Icons.Default.Done, contentDescription = null)
+                                            },
+                                            enabled = nonLusTotal > 0,
+                                            onClick = {
+                                                menuListe = false
+                                                vm.marquerToutLu()
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Tout réessayer les flux en erreur") },
+                                            leadingIcon = {
+                                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                            },
+                                            enabled = sources.any { !it.lastError.isNullOrBlank() },
+                                            onClick = {
+                                                menuListe = false
+                                                vm.reessayerToutesLesSources(
+                                                    sources.filter { !it.lastError.isNullOrBlank() }
+                                                        .map { it.id },
+                                                )
+                                            },
+                                        )
+                                    }
+                                }
+                                IconButton(onClick = {
+                                    ongletReglages = 0
+                                    ecran = Ecran.Reglages
+                                }) {
                                     Icon(Icons.Default.Settings, contentDescription = "Réglages")
                                 }
                             }
-                            if (ecran == Ecran.SourcesEnEchec) {
+                            if (ecran == Ecran.Reglages && ongletReglages == 1) {
                                 IconButton(
                                     onClick = {
                                         vm.reessayerToutesLesSources(
@@ -320,9 +387,7 @@ fun AppRoot(
                 }
             },
             bottomBar = {
-                if (ecran == Ecran.Liste || ecran == Ecran.Ia ||
-                    ecran == Ecran.SourcesEnEchec
-                ) {
+                if (ecran == Ecran.Liste || ecran == Ecran.Ia) {
                     NavigationBar {
                         NavigationBarItem(
                             selected = ecran == Ecran.Liste,
@@ -332,20 +397,30 @@ fun AppRoot(
                         )
                         NavigationBarItem(
                             selected = ecran == Ecran.Ia,
-                            onClick = { ecran = Ecran.Ia },
-                            icon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
-                            label = { Text("IA") },
+                            onClick = {
+                                // Un test à l'ouverture : l'indicateur vert/rouge
+                                // reflète l'état du moment, pas celui du lancement.
+                                vm.verifierIa()
+                                ecran = Ecran.Ia
+                            },
+                            icon = {
+                                Icon(
+                                    Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = teinteIa(iaDisponible),
+                                )
+                            },
+                            label = { Text("IA", color = teinteIa(iaDisponible)) },
+                        )
+                        // Le « + » remplace la bulle flottante : il ne masque
+                        // plus le bas de la liste.
+                        NavigationBarItem(
+                            selected = false,
+                            onClick = { dialogueAjout = true },
+                            icon = { Icon(Icons.Default.Add, contentDescription = "Ajouter un flux") },
+                            label = { Text("Ajouter") },
                         )
                     }
-                }
-            },
-            floatingActionButton = {
-                if (ecran == Ecran.Liste) {
-                    ExtendedFloatingActionButton(
-                        onClick = { dialogueAjout = true },
-                        icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                        text = { Text("Ajouter un flux") },
-                    )
                 }
             },
         ) { marges ->
@@ -381,20 +456,19 @@ fun AppRoot(
                         onResumer = { vm.resumerArticle(it) },
                         onSynthese = { vm.syntheseNonLus() },
                         onEffacerSynthese = { vm.effacerSynthese() },
-                        onReglagesIa = { ecran = Ecran.Reglages },
-                    )
-
-                    Ecran.SourcesEnEchec -> EcranSourcesEnEchec(
-                        sources = sources.filter { !it.lastError.isNullOrBlank() },
-                        onReessayer = { vm.reessayerSource(it) },
-                        onReessayerTout = { ids -> vm.reessayerToutesLesSources(ids) },
-                        onSupprimer = { vm.supprimerFlux(it) },
+                        onReglagesIa = {
+                            ongletReglages = 0
+                            ecran = Ecran.Reglages
+                        },
                     )
 
                     Ecran.Reglages -> EcranReglages(
                         vm = vm,
                         reglages = reglages,
                         nombreSources = sources.size,
+                        sourcesEnEchec = sources.filter { !it.lastError.isNullOrBlank() },
+                        onglet = ongletReglages,
+                        onOnglet = { ongletReglages = it },
                         modelesOllama = modelesOllama,
                         etatOllama = etatOllama,
                     )
@@ -630,7 +704,7 @@ private fun ContenuTiroir(
             }
             item {
                 NavigationDrawerItem(
-                    label = { Text("Réglages et OPML") },
+                    label = { Text("Paramétrage et OPML") },
                     icon = { Icon(Icons.Default.Settings, contentDescription = null) },
                     selected = false,
                     onClick = onReglages,

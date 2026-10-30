@@ -86,7 +86,11 @@ fun EcranIa(
                     Text(
                         etatOllama,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = if (etatOllama.startsWith("Injoignable")) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            VertIa
+                        },
                     )
                 }
                 Spacer(Modifier.height(8.dp))

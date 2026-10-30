@@ -72,17 +72,30 @@ L'onglet IA sépare deux choses :
   « Intelligence artificielle » (défaut `http://192.168.0.162:11434`,
   `ministral-3:8b`). Aucun texte d'article ne part vers un service extérieur.
 
-## Sources en échec
+## Flux en erreur (v1.4.0)
 
 Chaque échec de collecte est daté : `errorSince` (premier échec de la série) et
 `errorCount` (échecs consécutifs), remis à zéro dès qu'une collecte réussit
-(migration Room 1 → 2, sans perte des articles déjà stockés). L'écran dédié
-**Sources en échec**, accessible depuis le tiroir (entrée avec pastille quand il
-y en a), liste les sources fautives avec l'erreur, l'adresse, le nombre de jours,
-un bouton **Réessayer** par source et **Tout réessayer** dans la barre du haut.
+(migration Room 1 → 2, sans perte des articles déjà stockés). Le paramétrage est
+découpé en **deux onglets** : « Réglages » et « Flux en erreur (n) ». Le second
+liste les sources fautives avec l'erreur, l'adresse, le nombre de jours, un
+bouton **Réessayer** par source et **Tout réessayer** dans la barre du haut.
+Le tiroir garde un raccourci vers cet onglet, avec le compteur en pastille.
 Une source n'est signalée comme « à examiner » qu'après **8 jours** d'échec
 consécutif (`EtatSource.SEUIL_PROPOSITION_JOURS`) : une panne d'une heure ne
 déclenche rien, et aucune suppression n'est automatique.
+
+## Barre du bas et actions rapides (v1.4.0)
+
+La barre du bas porte **Articles**, **IA** et **Ajouter** (le « + » remplace la
+bulle flottante qui masquait le bas de la liste). L'entrée **IA** est verte
+quand le serveur Ollama répond à l'API, rouge quand il est injoignable, teinte
+neutre avant le premier test (test au lancement, à chaque changement d'adresse et
+à l'ouverture de l'onglet).
+
+Le menu **⋮** de la liste d'articles propose **Tout marquer comme lu** et
+**Tout réessayer les flux en erreur** : ces actions ne sont plus seulement dans
+le tiroir.
 
 ## Signature et mise à jour
 

@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RssFeed
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.Card
@@ -108,6 +109,7 @@ sealed interface Ecran {
     data object Liste : Ecran
     data class Lecteur(val articleId: Long) : Ecran
     data object Ia : Ecran
+    data object SourcesEnEchec : Ecran
     data object Reglages : Ecran
 }
 
@@ -220,6 +222,12 @@ fun AppRoot(
                         ecran = Ecran.Reglages
                         portee.launch { tiroir.close() }
                     },
+                    nombreSourcesEnEchec = sources.count { !it.lastError.isNullOrBlank() },
+                    selectionneSourcesEnEchec = ecran == Ecran.SourcesEnEchec,
+                    onSourcesEnEchec = {
+                        ecran = Ecran.SourcesEnEchec
+                        portee.launch { tiroir.close() }
+                    },
                 )
             }
         },
@@ -265,6 +273,7 @@ fun AppRoot(
                                 when (ecran) {
                                     is Ecran.Reglages -> "Réglages"
                                     is Ecran.Ia -> "IA"
+                                    is Ecran.SourcesEnEchec -> "Sources en échec"
                                     else -> selection.titre
                                 },
                                 maxLines = 1,
@@ -294,12 +303,26 @@ fun AppRoot(
                                     Icon(Icons.Default.Settings, contentDescription = "Réglages")
                                 }
                             }
+                            if (ecran == Ecran.SourcesEnEchec) {
+                                IconButton(
+                                    onClick = {
+                                        vm.reessayerToutesLesSources(
+                                            sources.filter { !it.lastError.isNullOrBlank() }
+                                                .map { it.id },
+                                        )
+                                    },
+                                ) {
+                                    Icon(Icons.Default.Refresh, contentDescription = "Tout réessayer")
+                                }
+                            }
                         },
                     )
                 }
             },
             bottomBar = {
-                if (ecran == Ecran.Liste || ecran == Ecran.Ia) {
+                if (ecran == Ecran.Liste || ecran == Ecran.Ia ||
+                    ecran == Ecran.SourcesEnEchec
+                ) {
                     NavigationBar {
                         NavigationBarItem(
                             selected = ecran == Ecran.Liste,
@@ -361,11 +384,17 @@ fun AppRoot(
                         onReglagesIa = { ecran = Ecran.Reglages },
                     )
 
+                    Ecran.SourcesEnEchec -> EcranSourcesEnEchec(
+                        sources = sources.filter { !it.lastError.isNullOrBlank() },
+                        onReessayer = { vm.reessayerSource(it) },
+                        onReessayerTout = { ids -> vm.reessayerToutesLesSources(ids) },
+                        onSupprimer = { vm.supprimerFlux(it) },
+                    )
+
                     Ecran.Reglages -> EcranReglages(
                         vm = vm,
                         reglages = reglages,
                         nombreSources = sources.size,
-                        sourcesEnEchec = sources.filter { !it.lastError.isNullOrBlank() },
                         modelesOllama = modelesOllama,
                         etatOllama = etatOllama,
                     )
@@ -459,6 +488,9 @@ private fun ContenuTiroir(
     onSupprimer: (FeedEntity) -> Unit,
     onMarquerToutLu: () -> Unit,
     onReglages: () -> Unit,
+    nombreSourcesEnEchec: Int = 0,
+    selectionneSourcesEnEchec: Boolean = false,
+    onSourcesEnEchec: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth()) {
         Row(
@@ -604,6 +636,18 @@ private fun ContenuTiroir(
                     onClick = onReglages,
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
                 )
+            }
+            if (nombreSourcesEnEchec > 0) {
+                item {
+                    NavigationDrawerItem(
+                        label = { Text("Sources en échec") },
+                        icon = { Icon(Icons.Default.Warning, contentDescription = null) },
+                        badge = { Text(nombreSourcesEnEchec.toString()) },
+                        selected = selectionneSourcesEnEchec,
+                        onClick = onSourcesEnEchec,
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                    )
+                }
             }
             item { Spacer(Modifier.height(24.dp)) }
         }

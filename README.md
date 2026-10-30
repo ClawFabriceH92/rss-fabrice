@@ -76,12 +76,13 @@ L'onglet IA sépare deux choses :
 
 Chaque échec de collecte est daté : `errorSince` (premier échec de la série) et
 `errorCount` (échecs consécutifs), remis à zéro dès qu'une collecte réussit
-(migration Room 1 → 2, sans perte des articles déjà stockés). Réglages,
-section « Sources en échec » liste les sources fautives avec l'erreur, un
-bouton **Réessayer** et un bouton **Supprimer**. Une source n'est signalée
-comme « à examiner » qu'après **8 jours** d'échec consécutif
-(`EtatSource.SEUIL_PROPOSITION_JOURS`) : une panne d'une heure ne déclenche
-rien, et aucune suppression n'est automatique.
+(migration Room 1 → 2, sans perte des articles déjà stockés). L'écran dédié
+**Sources en échec**, accessible depuis le tiroir (entrée avec pastille quand il
+y en a), liste les sources fautives avec l'erreur, l'adresse, le nombre de jours,
+un bouton **Réessayer** par source et **Tout réessayer** dans la barre du haut.
+Une source n'est signalée comme « à examiner » qu'après **8 jours** d'échec
+consécutif (`EtatSource.SEUIL_PROPOSITION_JOURS`) : une panne d'une heure ne
+déclenche rien, et aucune suppression n'est automatique.
 
 ## Signature et mise à jour
 

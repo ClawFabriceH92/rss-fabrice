@@ -47,7 +47,6 @@ fun EcranReglages(
     vm: MainViewModel,
     reglages: Reglages,
     nombreSources: Int,
-    sourcesEnEchec: List<fr.fh.rss.data.db.FeedEntity> = emptyList(),
     modelesOllama: List<String> = emptyList(),
     etatOllama: String? = null,
 ) {
@@ -55,7 +54,6 @@ fun EcranReglages(
     var urlSaisie by remember(reglages.ollamaUrl) {
         androidx.compose.runtime.mutableStateOf(reglages.ollamaUrl)
     }
-    val maintenant = remember(sourcesEnEchec) { System.currentTimeMillis() }
 
     val selecteurOpml = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -156,76 +154,6 @@ fun EcranReglages(
                                 onClick = { vm.setArchiveMax(valeur) },
                                 label = { Text("${valeur / 1000}k") },
                             )
-                        }
-                    }
-                }
-            }
-
-            item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
-            item { Titre("Sources en échec") }
-
-            item {
-                Text(
-                    "Une source doit échouer ${fr.fh.rss.data.EtatSource.SEUIL_PROPOSITION_JOURS} jours " +
-                        "de suite avant d'être proposée à la suppression. Rien n'est supprimé " +
-                        "sans ton accord.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
-            }
-
-            if (sourcesEnEchec.isEmpty()) {
-                item {
-                    Text(
-                        "Aucune source en échec.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                    )
-                }
-            }
-
-            for (feed in sourcesEnEchec) {
-                item(key = "erreur-${feed.id}") {
-                    val due = fr.fh.rss.data.EtatSource.propositionDue(feed.errorSince, maintenant)
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                feed.title,
-                                style = MaterialTheme.typography.bodyLarge,
-                                maxLines = 2,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (due) {
-                                Text(
-                                    "À examiner",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        }
-                        Text(
-                            feed.lastError ?: "erreur inconnue",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
-                            maxLines = 2,
-                        )
-                        Text(
-                            fr.fh.rss.data.EtatSource.resume(
-                                feed.errorSince,
-                                feed.errorCount,
-                                maintenant,
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Row {
-                            TextButton(onClick = { vm.reessayerSource(feed.id) }) {
-                                Text("Réessayer")
-                            }
-                            TextButton(onClick = { vm.supprimerFlux(feed.id) }) {
-                                Text("Supprimer la source")
-                            }
                         }
                     }
                 }

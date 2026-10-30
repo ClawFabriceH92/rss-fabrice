@@ -281,6 +281,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Nouvel essai sur toutes les sources en échec, une par une. */
+    fun reessayerToutesLesSources(feedIds: List<Long>) {
+        if (feedIds.isEmpty()) return
+        if (_enCours.value) return
+        viewModelScope.launch {
+            _enCours.value = true
+            var reussies = 0
+            for (id in feedIds) {
+                runCatching { depot.refreshById(id) }.onSuccess { reussies++ }
+            }
+            _enCours.value = false
+            _message.value = when (reussies) {
+                feedIds.size -> "Toutes les sources répondent à nouveau."
+                0 -> "Aucune source n'a répondu."
+                else -> "${reussies} source(s) sur ${feedIds.size} répondent à nouveau."
+            }
+        }
+    }
+
     // ------------------------------------------------------------- onglet IA
 
     /** Les modèles renvoient parfois du gras markdown : inutile à l'écran. */

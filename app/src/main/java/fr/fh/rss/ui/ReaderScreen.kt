@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.text.TextUtils
 import android.webkit.WebView
+import fr.fh.rss.data.net.TitreContenu
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -25,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
@@ -120,6 +122,10 @@ fun EcranLecteur(
             ?: courant.textContent?.split("\n\n")?.joinToString("") { "<p>${TextUtils.htmlEncode(it)}</p>" }
             ?: "<p>Contenu indisponible. Ouvrez l'article dans le navigateur.</p>"
 
+        // Beaucoup de flux commencent par le titre de l'article : le lecteur
+        // l'ajoute déjà en tête, on évite de l'afficher deux fois.
+        val contenuSansTitre = TitreContenu.retirerTitreDuplique(contenu, courant.title)
+
         val html = buildString {
             append("<!doctype html><html><head>")
             append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
@@ -144,15 +150,33 @@ fun EcranLecteur(
                 append(" · ").append(TextUtils.htmlEncode(courant.author))
             }
             append("</p>")
-            append(contenu)
+            append(contenuSansTitre)
             append("</body></html>")
         }
 
-        AndroidView(
-            modifier = Modifier.padding(marges).fillMaxSize(),
-            factory = { ctx -> creerWebView(ctx) },
-            update = { vue -> vue.loadDataWithBaseURL(courant.url, html, "text/html", "utf-8", null) },
-        )
+        val cleAffichage = "${courant.id}|${html.hashCode()}"
+        key(courant.id) {
+            AndroidView(
+                modifier = Modifier.padding(marges).fillMaxSize(),
+                factory = { ctx -> creerWebView(ctx) },
+                update = { vue ->
+                    // Ne recharger que si le contenu a réellement changé.
+                    // Marquer l'article comme lu réémet la fiche (isRead passe
+                    // à true) : recharger à ce moment-là renvoyait la lecture
+                    // en haut de l'article au moindre défilement.
+                    if (vue.tag != cleAffichage) {
+                        vue.tag = cleAffichage
+                        vue.loadDataWithBaseURL(
+                            courant.url,
+                            html,
+                            "text/html",
+                            "utf-8",
+                            null,
+                        )
+                    }
+                },
+            )
+        }
     }
 }
 

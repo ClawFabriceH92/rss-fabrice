@@ -73,6 +73,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _enCours = MutableStateFlow(false)
     val enCours: StateFlow<Boolean> = _enCours.asStateFlow()
 
+    /** Dernier bilan de collecte : sert à la pastille animée de l'écran. */
+    private val _dernierBilan = MutableStateFlow<RefreshSummary?>(null)
+    val dernierBilan: StateFlow<RefreshSummary?> = _dernierBilan.asStateFlow()
+
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
@@ -94,18 +98,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_enCours.value) return
         viewModelScope.launch {
             _enCours.value = true
+            _dernierBilan.value = null
             val bilan = runCatching { depot.refreshAll() }
-                .getOrElse { RefreshSummary(echecs = listOf("collecte" to (it.message ?: "erreur")) ) }
+                .getOrElse { RefreshSummary(echecs = listOf("collecte" to (it.message ?: "erreur"))) }
             _enCours.value = false
-            val texte = when {
-                bilan.sources == 0 -> "Aucune source : ajoutez un flux ou importez un OPML."
-                bilan.echecs.isEmpty() && bilan.nouveaux == 0 -> "Aucun nouvel article."
-                bilan.echecs.isEmpty() -> "${bilan.nouveaux} nouvel(aux) article(s)."
-                else -> "${bilan.nouveaux} nouvel(aux) article(s), ${bilan.echecs.size} source(s) en échec : " +
+            // Le succès passe par la pastille animée ; la barre de messages est
+            // réservée aux échecs, pour ne pas dire deux fois la même chose.
+            _message.value = if (bilan.echecs.isEmpty()) {
+                null
+            } else {
+                "${bilan.echecs.size} source(s) en échec : " +
                     bilan.echecs.take(2).joinToString(", ") { "${it.first} (${it.second})" }
             }
-            _message.value = texte
+            _dernierBilan.value = bilan
         }
+    }
+
+    fun effacerBilan() {
+        _dernierBilan.value = null
     }
 
     /** Lancée une seule fois par processus, à la première ouverture. */

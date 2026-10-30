@@ -41,7 +41,6 @@ fun EcranReglages(
     vm: MainViewModel,
     reglages: Reglages,
     nombreSources: Int,
-    onRetour: () -> Unit,
 ) {
     val contexte = LocalContext.current
 
@@ -56,19 +55,9 @@ fun EcranReglages(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Réglages") },
-                navigationIcon = {
-                    IconButton(onClick = onRetour) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
-                    }
-                },
-            )
-        },
-    ) { marges ->
-        LazyColumn(Modifier.padding(marges).fillMaxWidth()) {
+    // Pas de Scaffold ni de barre ici : celle de l'écran principal porte déjà le
+    // titre « Réglages » et la flèche de retour (sinon le mot s'affiche deux fois).
+    LazyColumn(Modifier.fillMaxWidth()) {
 
             item { Titre("Collecte") }
 
@@ -231,7 +220,6 @@ fun EcranReglages(
                     modifier = Modifier.padding(16.dp),
                 )
             }
-        }
     }
 }
 

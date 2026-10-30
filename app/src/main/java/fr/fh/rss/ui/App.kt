@@ -1,6 +1,12 @@
 package fr.fh.rss.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,9 +29,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.ImportExport
@@ -48,6 +56,7 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -57,6 +66,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -87,6 +97,7 @@ import fr.fh.rss.data.Reglages
 import fr.fh.rss.data.db.ArticleEntity
 import fr.fh.rss.data.db.FeedEntity
 import fr.fh.rss.data.db.FolderEntity
+import fr.fh.rss.data.model.RefreshSummary
 import kotlinx.coroutines.launch
 
 /** Écrans de l'application (pas de bibliothèque de navigation : trois états suffisent). */
@@ -125,6 +136,19 @@ fun AppRoot(
     val message by vm.message.collectAsState()
     val reglages by vm.reglages.collectAsState()
     val majEtat by fr.fh.rss.update.UpdateManager.state.collectAsState()
+    val bilan by vm.dernierBilan.collectAsState()
+    var bilanVisible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(bilan) {
+        if (bilan == null) {
+            bilanVisible = false
+            return@LaunchedEffect
+        }
+        bilanVisible = true
+        kotlinx.coroutines.delay(2600)
+        bilanVisible = false
+        vm.effacerBilan()
+    }
 
     val snackbar = remember { SnackbarHostState() }
     val titres = remember(sources) { sources.associate { it.id to it.title } }
@@ -220,7 +244,7 @@ fun AppRoot(
                             }
                         },
                     )
-                } else {
+                } else if (ecran !is Ecran.Lecteur) {
                     TopAppBar(
                         title = {
                             Text(
@@ -289,8 +313,30 @@ fun AppRoot(
                         vm = vm,
                         reglages = reglages,
                         nombreSources = sources.size,
-                        onRetour = { ecran = Ecran.Liste },
                     )
+                }
+
+                // Retour visuel de la collecte : fine barre pendant le
+                // téléchargement, puis pastille « à jour » qui apparaît en
+                // douceur et s'efface toute seule.
+                if (enCours) {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .height(3.dp),
+                    )
+                }
+                AnimatedVisibility(
+                    visible = bilanVisible,
+                    enter = fadeIn() + scaleIn(initialScale = 0.85f) +
+                        slideInVertically { -it / 2 },
+                    exit = fadeOut() + slideOutVertically { -it / 2 },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 12.dp),
+                ) {
+                    PastilleCollecte(bilan)
                 }
             }
         }
@@ -872,4 +918,47 @@ private fun Vignette(url: String?, hauteur: Int, pleineLargeur: Boolean = false)
             .height(hauteur.dp)
             .clip(RoundedCornerShape(if (pleineLargeur) 12.dp else 8.dp)),
     )
+}
+
+/**
+ * Pastille de retour de collecte : « Flux à jour », « N nouveaux articles » ou
+ * le nombre d'échecs. Elle apparaît en fondu + léger zoom puis s'efface.
+ */
+@Composable
+private fun PastilleCollecte(bilan: RefreshSummary?) {
+    if (bilan == null) return
+    val enEchec = bilan.echecs.isNotEmpty()
+    val texte = when {
+        bilan.sources == 0 -> "Aucune source à collecter"
+        enEchec && bilan.nouveaux > 0 ->
+            "${bilan.nouveaux} nouveau(x) · ${bilan.echecs.size} échec(s)"
+        enEchec -> "${bilan.echecs.size} source(s) en échec"
+        bilan.nouveaux == 0 -> "Flux à jour"
+        else -> "${bilan.nouveaux} nouveau(x) article(s)"
+    }
+    val fond = if (enEchec) MaterialTheme.colorScheme.errorContainer
+    else MaterialTheme.colorScheme.primaryContainer
+    val encre = if (enEchec) MaterialTheme.colorScheme.onErrorContainer
+    else MaterialTheme.colorScheme.onPrimaryContainer
+
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = fond,
+        tonalElevation = 3.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (enEchec) Icons.Default.ErrorOutline else Icons.Default.CheckCircle,
+                contentDescription = null,
+                tint = encre,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(texte, style = MaterialTheme.typography.labelLarge, color = encre)
+        }
+    }
 }

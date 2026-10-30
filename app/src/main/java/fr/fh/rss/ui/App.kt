@@ -716,22 +716,31 @@ private fun LigneBalayable(
         enableDismissFromEndToStart = false,
         enableDismissFromStartToEnd = true,
         backgroundContent = {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-                    .padding(horizontal = 24.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                Icon(
-                    if (article.isRead) Icons.Default.MarkEmailUnread else Icons.Default.Done,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
+            // Le fond n'apparaît que pendant le geste : sinon la ligne doit
+            // rester sur le fond de l'écran, sans aplat de couleur ni icône
+            // visibles sous le texte.
+            if (etat.dismissDirection != SwipeToDismissBoxValue.Settled) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .padding(horizontal = 24.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Icon(
+                        if (article.isRead) Icons.Default.MarkEmailUnread else Icons.Default.Done,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
             }
         },
     ) {
-        LigneArticle(article, source, withImage, onOuvrir, onFavori)
+        // Fond opaque obligatoire : sans lui, le calque du balayage se voit
+        // sous chaque ligne (vécu v1.0.0 : écran entier orange).
+        Box(Modifier.background(MaterialTheme.colorScheme.background)) {
+            LigneArticle(article, source, withImage, onOuvrir, onFavori)
+        }
     }
 }
 

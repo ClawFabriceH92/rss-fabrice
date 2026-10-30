@@ -6,16 +6,16 @@
     android:viewportHeight="108">
     <!-- Glyphe RSS dessiné dans la zone sûre (66dp centrée : 21 → 87) -->
     <path
-        android:fillColor="#FFFFFF"
+        android:fillColor="#3E5C4B"
         android:pathData="M34,72 m-5.5,0 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0" />
     <path
         android:pathData="M34,55 A17,17 0 0,1 51,72"
-        android:strokeColor="#FFFFFF"
+        android:strokeColor="#3E5C4B"
         android:strokeWidth="6.5"
         android:strokeLineCap="round" />
     <path
         android:pathData="M34,38 A34,34 0 0,1 68,72"
-        android:strokeColor="#FFFFFF"
+        android:strokeColor="#3E5C4B"
         android:strokeWidth="6.5"
         android:strokeLineCap="round" />
 </vector>

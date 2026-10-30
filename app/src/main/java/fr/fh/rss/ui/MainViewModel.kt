@@ -283,6 +283,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------- onglet IA
 
+    /** Les modèles renvoient parfois du gras markdown : inutile à l'écran. */
+    private fun nettoyerReponse(texte: String): String = texte
+        .replace("**", "")
+        .replace("__", "")
+        .trim()
+
     /** Résumé d'un article par le modèle local. */
     fun resumerArticle(article: ArticleEntity) {
         if (_resumeEnCours.value != null) return
@@ -310,7 +316,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             }.onSuccess { resume ->
-                _resumes.value = _resumes.value + (article.id to resume)
+                _resumes.value = _resumes.value + (article.id to nettoyerReponse(resume))
                 _ollamaEtat.value = "Connecté · ${courant.ollamaModele}"
             }.onFailure { erreur ->
                 val detail = erreur.message ?: "modèle injoignable"
@@ -344,7 +350,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             }.onSuccess { texte ->
-                _synthese.value = texte
+                _synthese.value = nettoyerReponse(texte)
                 _ollamaEtat.value = "Connecté · ${courant.ollamaModele}"
             }.onFailure { erreur ->
                 val detail = erreur.message ?: "modèle injoignable"

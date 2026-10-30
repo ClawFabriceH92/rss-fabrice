@@ -29,6 +29,10 @@ import kotlinx.coroutines.launch
 /** Ce que l'écran principal affiche. */
 data class Selection(val filtre: Filtre, val titre: String)
 
+/** Taille d'une page de liste, et plafond pour ne pas tout charger en mémoire. */
+const val LIMITE_PAGE = 500
+const val LIMITE_MAX = 5000
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -62,11 +66,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _recherche = MutableStateFlow("")
     val recherche: StateFlow<String> = _recherche.asStateFlow()
 
+    /** Nombre d'articles demandés à la base ; augmente par « Charger plus ». */
+    private val _limite = MutableStateFlow(LIMITE_PAGE)
+    val limite: StateFlow<Int> = _limite.asStateFlow()
+
     val articles: StateFlow<List<ArticleEntity>> =
-        combine(_selection, _recherche) { sel, requete -> sel to requete }
-            .flatMapLatest { (sel, requete) ->
-                if (requete.isBlank()) depot.observeArticles(sel.filtre)
-                else depot.observeSearch(requete)
+        combine(_selection, _recherche, _limite) { sel, requete, limite ->
+            Triple(sel, requete, limite)
+        }
+            .flatMapLatest { (sel, requete, limite) ->
+                if (requete.isBlank()) depot.observeArticles(sel.filtre, limite)
+                else depot.observeSearch(requete, limite)
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -78,6 +88,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val articlesAffiches: StateFlow<List<ArticleEntity>> = articles
         .map { fr.fh.rss.data.Regroupement.dedoublonner(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Autres parutions du même article (même adresse ou même titre), source par
+     * source : sert au « vu aussi sur … » de la liste et du lecteur.
+     */
+    val autresVersions: StateFlow<Map<Long, List<fr.fh.rss.data.Regroupement.AutreVersion>>> =
+        combine(articles, sources) { liste, flux ->
+            fr.fh.rss.data.Regroupement.autresVersions(
+                liste,
+                flux.associate { it.id to it.title },
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private val _enCours = MutableStateFlow(false)
     val enCours: StateFlow<Boolean> = _enCours.asStateFlow()
@@ -125,10 +147,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun changerSelection(sel: Selection) {
         _selection.value = sel
         _recherche.value = ""
+        _limite.value = LIMITE_PAGE
     }
 
     fun setRecherche(texte: String) {
         _recherche.value = texte
+        _limite.value = LIMITE_PAGE
+    }
+
+    /** Affiche une page de plus : la base n'en renvoie que [limite] à la fois. */
+    fun chargerPlus() {
+        _limite.value = (_limite.value + LIMITE_PAGE).coerceAtMost(LIMITE_MAX)
     }
 
     /** Collecte systématique au lancement, puis à la demande. */
@@ -448,6 +477,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    fun setNotifierNouveaux(actif: Boolean) =
+        viewModelScope.launch { reglagesDepot.setNotifierNouveaux(actif) }
+
+    fun setSilenceNuit(actif: Boolean) =
+        viewModelScope.launch { reglagesDepot.setSilenceNuit(actif) }
 
     fun setOllamaUrl(valeur: String) = viewModelScope.launch { reglagesDepot.setOllamaUrl(valeur) }
 

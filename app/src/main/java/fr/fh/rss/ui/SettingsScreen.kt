@@ -152,6 +152,26 @@ fun EcranReglages(
             }
 
             item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+            item { Titre("Notifications") }
+
+            item {
+                LigneBascule(
+                    titre = "Nouveaux articles",
+                    detail = "Une notification après une collecte qui rapporte du neuf " +
+                        "(3 titres en aperçu).",
+                    actif = reglages.notifierNouveaux,
+                ) { vm.setNotifierNouveaux(it) }
+            }
+
+            item {
+                LigneBascule(
+                    titre = "Silence la nuit",
+                    detail = "Aucune notification entre 22 h et 7 h.",
+                    actif = reglages.silenceNuit,
+                ) { vm.setSilenceNuit(it) }
+            }
+
+            item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
             item { Titre("Affichage") }
 
             item {

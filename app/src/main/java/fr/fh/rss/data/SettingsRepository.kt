@@ -23,6 +23,10 @@ data class Reglages(
     val archiveMax: Int = 20000,
     val ollamaUrl: String = fr.fh.rss.data.net.Ollama.ADRESSE_DEFAUT,
     val ollamaModele: String = fr.fh.rss.data.net.Ollama.MODELE_DEFAUT,
+    /** Notification après une collecte qui rapporte des articles. */
+    val notifierNouveaux: Boolean = true,
+    /** Silence des notifications entre 22 h et 7 h. */
+    val silenceNuit: Boolean = true,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -36,6 +40,8 @@ class SettingsRepository(private val context: Context) {
         val archive = intPreferencesKey("archive_max")
         val ollamaUrl = stringPreferencesKey("ollama_url")
         val ollamaModele = stringPreferencesKey("ollama_modele")
+        val notifier = booleanPreferencesKey("notifier_nouveaux")
+        val silence = booleanPreferencesKey("silence_nuit")
     }
 
     val flow: Flow<Reglages> = context.dataStore.data.map { p ->
@@ -48,6 +54,8 @@ class SettingsRepository(private val context: Context) {
             archiveMax = p[Cles.archive] ?: 20000,
             ollamaUrl = p[Cles.ollamaUrl] ?: fr.fh.rss.data.net.Ollama.ADRESSE_DEFAUT,
             ollamaModele = p[Cles.ollamaModele] ?: fr.fh.rss.data.net.Ollama.MODELE_DEFAUT,
+            notifierNouveaux = p[Cles.notifier] ?: true,
+            silenceNuit = p[Cles.silence] ?: true,
         )
     }
 
@@ -71,4 +79,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setArchiveMax(nombre: Int) =
         context.dataStore.edit { it[Cles.archive] = nombre.coerceIn(500, 200000) }
+
+    suspend fun setNotifierNouveaux(actif: Boolean) =
+        context.dataStore.edit { it[Cles.notifier] = actif }
+
+    suspend fun setSilenceNuit(actif: Boolean) =
+        context.dataStore.edit { it[Cles.silence] = actif }
 }

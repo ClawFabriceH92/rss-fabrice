@@ -107,6 +107,48 @@ object Regroupement {
         return if (parametres.isEmpty()) base else base + "?" + parametres.joinToString("&")
     }
 
+    /** Une autre parution du même article, avec sa source. */
+    data class AutreVersion(val articleId: Long, val source: String)
+
+    /** Clés d'identité d'un article : adresse nettoyée et titre significatif. */
+    private fun cles(article: fr.fh.rss.data.db.ArticleEntity): List<String> = buildList {
+        cleUrl(article.url)?.let { add("url:$it") }
+        val titre = normaliserTitre(article.title)
+        if (titre.length >= LONGUEUR_TITRE_CLE) add("titre:$titre")
+    }
+
+    /**
+     * Pour chaque article, les autres parutions du même sujet (autres sources),
+     * afin d'afficher « vu aussi sur … » dans la liste.
+     */
+    fun autresVersions(
+        articles: List<fr.fh.rss.data.db.ArticleEntity>,
+        titresSources: Map<Long, String>,
+    ): Map<Long, List<AutreVersion>> {
+        val parCle = HashMap<String, MutableList<fr.fh.rss.data.db.ArticleEntity>>()
+        for (article in articles) {
+            for (cle in cles(article)) {
+                parCle.getOrPut(cle) { mutableListOf() }.add(article)
+            }
+        }
+        val sortie = HashMap<Long, List<AutreVersion>>()
+        for (article in articles) {
+            val vus = LinkedHashSet<Long>()
+            val autres = mutableListOf<AutreVersion>()
+            for (cle in cles(article)) {
+                for (meme in parCle[cle].orEmpty()) {
+                    if (meme.id == article.id || !vus.add(meme.id)) continue
+                    autres += AutreVersion(
+                        articleId = meme.id,
+                        source = titresSources[meme.feedId] ?: "source inconnue",
+                    )
+                }
+            }
+            if (autres.isNotEmpty()) sortie[article.id] = autres
+        }
+        return sortie
+    }
+
     /**
      * Retire les articles déjà vus, en gardant la première occurrence (la liste
      * est triée du plus récent au plus ancien).
@@ -122,11 +164,7 @@ object Regroupement {
         val vues = HashSet<String>()
         val gardes = ArrayList<fr.fh.rss.data.db.ArticleEntity>(articles.size)
         for (article in articles) {
-            val cles = buildList {
-                cleUrl(article.url)?.let { add("url:$it") }
-                val titre = normaliserTitre(article.title)
-                if (titre.length >= LONGUEUR_TITRE_CLE) add("titre:$titre")
-            }
+            val cles = cles(article)
             if (cles.isEmpty()) {
                 gardes.add(article)
                 continue

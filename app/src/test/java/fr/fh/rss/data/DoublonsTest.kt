@@ -3,6 +3,7 @@ package fr.fh.rss.data
 import fr.fh.rss.data.db.ArticleEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DoublonsTest {
@@ -77,6 +78,23 @@ class DoublonsTest {
         )
 
         assertEquals(2, gardes.size)
+    }
+
+    @Test
+    fun `les autres parutions sont rattachees au premier article`() {
+        val articles = listOf(
+            article(1, 1, "Le Sénat vote le budget 2027 en première lecture", "https://a.fr/x"),
+            article(2, 2, "Le Senat vote le budget 2027 en premiere lecture", "https://b.fr/y"),
+            article(3, 3, "Une information sans rapport avec la précédente", "https://c.fr/z"),
+        )
+        val sources = mapOf(1L to "Le Monde", 2L to "AFP", 3L to "Les Échos")
+
+        val autres = Regroupement.autresVersions(articles, sources)
+
+        assertEquals(listOf("AFP"), autres.getValue(1L).map { it.source })
+        assertEquals(listOf(2L), autres[1L]?.map { it.articleId })
+        assertEquals(listOf("Le Monde"), autres.getValue(2L).map { it.source })
+        assertTrue(autres[3L].isNullOrEmpty())
     }
 
     @Test

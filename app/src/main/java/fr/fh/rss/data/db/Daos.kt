@@ -175,6 +175,10 @@ interface ArticleDao {
     @Query("SELECT COUNT(*) FROM articles")
     suspend fun total(): Int
 
+    /** Titres des derniers articles non lus : aperçu de la notification. */
+    @Query("SELECT * FROM articles WHERE isRead = 0 ORDER BY publishedAt DESC LIMIT :limite")
+    suspend fun derniersNonLus(limite: Int): List<ArticleEntity>
+
     /** Purge d'archive : conserve les [keep] plus récents, jamais les favoris. */
     @Query(
         "DELETE FROM articles WHERE isStarred = 0 AND id NOT IN " +

@@ -316,6 +316,10 @@ class FeedRepository(
         true
     }
 
+    /** Titres des derniers articles non lus, pour l'aperçu de la notification. */
+    suspend fun derniersTitresNonLus(limite: Int = 3): List<String> =
+        runCatching { articleDao.derniersNonLus(limite).map { it.title } }.getOrDefault(emptyList())
+
     suspend fun trimArchive() {
         val limite = archiveMax()
         runCatching {

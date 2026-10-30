@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
@@ -30,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -57,6 +59,9 @@ fun EcranLecteur(
     articleId: Long,
     onRetour: () -> Unit,
     onDesabonnement: (Long) -> Unit = {},
+    /** Autres sources qui ont publié le même article. */
+    autresVersions: List<fr.fh.rss.data.Regroupement.AutreVersion> = emptyList(),
+    onOuvrirVersion: (Long) -> Unit = {},
 ) {
     var menuActions by remember { mutableStateOf(false) }
     var confirmationDesabo by remember { mutableStateOf(false) }
@@ -159,6 +164,22 @@ fun EcranLecteur(
                             expanded = menuActions,
                             onDismissRequest = { menuActions = false },
                         ) {
+                            for (version in autresVersions) {
+                                DropdownMenuItem(
+                                    text = { Text("Version : ${version.source}") },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.OpenInNew,
+                                            contentDescription = null,
+                                        )
+                                    },
+                                    onClick = {
+                                        menuActions = false
+                                        onOuvrirVersion(version.articleId)
+                                    },
+                                )
+                            }
+                            if (autresVersions.isNotEmpty()) HorizontalDivider()
                             DropdownMenuItem(
                                 text = {
                                     Text(

@@ -64,6 +64,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
@@ -99,6 +100,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import fr.fh.rss.data.Filtre
+import fr.fh.rss.data.Regroupement
 import fr.fh.rss.data.Reglages
 import fr.fh.rss.data.db.ArticleEntity
 import fr.fh.rss.data.db.FeedEntity
@@ -167,6 +169,8 @@ fun AppRoot(
 
     val articles by vm.articles.collectAsState()
     val articlesAffiches by vm.articlesAffiches.collectAsState()
+    val autresVersions by vm.autresVersions.collectAsState()
+    val limite by vm.limite.collectAsState()
     val selection by vm.selection.collectAsState()
     val sources by vm.sources.collectAsState()
     val dossiers by vm.dossiers.collectAsState()
@@ -485,6 +489,9 @@ fun AppRoot(
                                 onOuvrir = { ecran = Ecran.Lecteur(it.id) },
                                 onBasculerLu = { vm.basculerLu(it) },
                                 onFavori = { vm.basculerFavori(it) },
+                                autres = autresVersions,
+                                peutChargerPlus = articles.size >= limite,
+                                onChargerPlus = { vm.chargerPlus() },
                             )
                         }
                     }
@@ -492,6 +499,8 @@ fun AppRoot(
                     is Ecran.Lecteur -> EcranLecteur(
                         vm = vm,
                         articleId = courant.articleId,
+                        autresVersions = autresVersions[courant.articleId].orEmpty(),
+                        onOuvrirVersion = { autreId -> ecran = Ecran.Lecteur(autreId) },
                         onRetour = { ecran = Ecran.Liste },
                         onDesabonnement = { feedId ->
                             // Supprimer la source retire aussi ses articles :
@@ -887,6 +896,9 @@ private fun ZoneArticles(
     onOuvrir: (ArticleEntity) -> Unit,
     onBasculerLu: (ArticleEntity) -> Unit,
     onFavori: (ArticleEntity) -> Unit,
+    autres: Map<Long, List<Regroupement.AutreVersion>> = emptyMap(),
+    peutChargerPlus: Boolean = false,
+    onChargerPlus: () -> Unit = {},
 ) {
     PullToRefreshBox(
         isRefreshing = enCours,
@@ -956,6 +968,7 @@ private fun ZoneArticles(
                                 onOuvrir = { onOuvrir(article) },
                                 onBasculerLu = { onBasculerLu(article) },
                                 onFavori = { onFavori(article) },
+                                autres = autres[article.id].orEmpty(),
                             )
                         }
                     }
@@ -968,7 +981,22 @@ private fun ZoneArticles(
                             onOuvrir = { onOuvrir(article) },
                             onBasculerLu = { onBasculerLu(article) },
                             onFavori = { onFavori(article) },
+                            autres = autres[article.id].orEmpty(),
                         )
+                    }
+                }
+                // La liste est demandée par pages : au-delà, il faut le dire,
+                // sinon les articles plus anciens sont inatteignables.
+                if (peutChargerPlus) {
+                    item(key = "charger-plus") {
+                        Row(
+                            Modifier.fillMaxWidth().padding(16.dp),
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            OutlinedButton(onClick = onChargerPlus) {
+                                Text("Charger plus d'articles")
+                            }
+                        }
                     }
                 }
             }
@@ -985,6 +1013,7 @@ private fun LigneBalayable(
     onOuvrir: () -> Unit,
     onBasculerLu: () -> Unit,
     onFavori: () -> Unit,
+    autres: List<Regroupement.AutreVersion> = emptyList(),
 ) {
     val etat = rememberSwipeToDismissBoxState(
         confirmValueChange = { valeur ->
@@ -1020,7 +1049,7 @@ private fun LigneBalayable(
         // Fond opaque obligatoire : sans lui, le calque du balayage se voit
         // sous chaque ligne (vécu v1.0.0 : écran entier orange).
         Box(Modifier.background(fondArticle(article.isRead))) {
-            LigneArticle(article, source, withImage, onOuvrir, onFavori)
+            LigneArticle(article, source, withImage, onOuvrir, onFavori, autres)
         }
     }
 }
@@ -1032,6 +1061,7 @@ private fun LigneArticle(
     withImage: Boolean,
     onOuvrir: () -> Unit,
     onFavori: () -> Unit,
+    autres: List<Regroupement.AutreVersion> = emptyList(),
 ) {
     Row(
         Modifier
@@ -1074,6 +1104,18 @@ private fun LigneArticle(
                     "  ·  ${dateCourte(article.publishedAt)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (autres.isNotEmpty()) {
+                val noms = autres.map { it.source }.distinct()
+                Text(
+                    "vu aussi sur " + noms.take(3).joinToString(", ") +
+                        if (noms.size > 3) " (+${noms.size - 3})" else "",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
         }

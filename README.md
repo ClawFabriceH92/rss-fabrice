@@ -111,6 +111,20 @@ le tiroir.
   une fois lu (teintes adaptées au thème sombre), en liste comme en cartes.
 - **Bascule Tous / Non lus** en haut de la liste, avec le compteur de non lus.
 
+## Veille et confort de liste (v1.6.0)
+
+- **Notifications** : après une collecte de fond qui rapporte du neuf, une
+  notification unique (« 12 nouveaux articles », 3 titres en aperçu) ouvre
+  l'application. Deux réglages : activer/désactiver, silence de nuit 22 h - 7 h.
+  Permission Android 13 demandée au lancement, canal `nouveaux-articles`,
+  petite icône `ic_stat_rss`.
+- **« vu aussi sur … »** : sous un article repris par plusieurs sources, la
+  liste indique les autres sources ; le menu ⋮ du lecteur permet d'ouvrir
+  directement la version d'une autre source.
+- **Charger plus** : la liste ne demandait que 500 articles à la base ; un
+  bouton charge 500 de plus (plafond 5 000), remis à zéro à chaque changement
+  de filtre ou de recherche.
+
 ## Signature et mise à jour
 
 Le keystore de release vit hors du dépôt (`/root/.secrets/keystores-android/`)

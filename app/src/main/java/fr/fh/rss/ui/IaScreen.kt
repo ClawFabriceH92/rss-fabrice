@@ -140,6 +140,12 @@ fun EcranIa(
                     if (!synthese.isNullOrBlank()) {
                         Spacer(Modifier.height(10.dp))
                         Text(synthese, style = MaterialTheme.typography.bodyMedium)
+                    } else if (syntheseEnCours) {
+                        Spacer(Modifier.height(12.dp))
+                        BlocAttente(
+                            phrases = PHRASES_SYNTHESE,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }

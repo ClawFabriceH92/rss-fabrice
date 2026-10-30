@@ -336,6 +336,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         _iaEnCours.value = true
+        _synthese.value = null
         viewModelScope.launch {
             val courant = reglages.value
             val contenu = nonLus.joinToString("\n") { "- ${it.title}" }

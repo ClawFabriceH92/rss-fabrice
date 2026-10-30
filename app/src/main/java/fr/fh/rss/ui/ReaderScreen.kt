@@ -7,6 +7,7 @@ import android.webkit.WebView
 import fr.fh.rss.data.net.TitreContenu
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -16,6 +17,8 @@ import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -185,27 +188,47 @@ fun EcranLecteur(
         }
 
         val cleAffichage = "${courant.id}|${html.hashCode()}"
-        key(courant.id) {
-            AndroidView(
-                modifier = Modifier.padding(marges).fillMaxSize(),
-                factory = { ctx -> creerWebView(ctx) },
-                update = { vue ->
-                    // Ne recharger que si le contenu a réellement changé.
-                    // Marquer l'article comme lu réémet la fiche (isRead passe
-                    // à true) : recharger à ce moment-là renvoyait la lecture
-                    // en haut de l'article au moindre défilement.
-                    if (vue.tag != cleAffichage) {
-                        vue.tag = cleAffichage
-                        vue.loadDataWithBaseURL(
-                            courant.url,
-                            html,
-                            "text/html",
-                            "utf-8",
-                            null,
-                        )
-                    }
-                },
-            )
+        Box(Modifier.padding(marges).fillMaxSize()) {
+            key(courant.id) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx -> creerWebView(ctx) },
+                    update = { vue ->
+                        // Ne recharger que si le contenu a réellement changé.
+                        // Marquer l'article comme lu réémet la fiche (isRead passe
+                        // à true) : recharger à ce moment-là renvoyait la lecture
+                        // en haut de l'article au moindre défilement.
+                        if (vue.tag != cleAffichage) {
+                            vue.tag = cleAffichage
+                            vue.loadDataWithBaseURL(
+                                courant.url,
+                                html,
+                                "text/html",
+                                "utf-8",
+                                null,
+                            )
+                        }
+                    },
+                )
+            }
+            // Pendant le résumé, l'attente s'affiche par-dessus la lecture :
+            // l'article reste visible et lisible sous le bandeau.
+            if (resumeEnCours == courant.id) {
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                ) {
+                    BlocAttente(
+                        phrases = PHRASES_RESUME,
+                        modifier = Modifier.padding(14.dp),
+                    )
+                }
+            }
         }
     }
 }

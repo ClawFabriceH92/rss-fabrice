@@ -1088,7 +1088,11 @@ private fun PastilleCollecte(bilan: RefreshSummary?) {
         enEchec && bilan.nouveaux > 0 ->
             "${bilan.nouveaux} nouveau(x) · ${bilan.echecs.size} échec(s)"
         enEchec -> "${bilan.echecs.size} source(s) en échec"
+        bilan.nouveaux == 0 && bilan.enPause > 0 ->
+            "À jour · ${bilan.enPause} source(s) au repos"
         bilan.nouveaux == 0 -> "Flux à jour"
+        bilan.enPause > 0 ->
+            "${bilan.nouveaux} nouveau(x) · ${bilan.enPause} au repos"
         else -> "${bilan.nouveaux} nouveau(x) article(s)"
     }
     val fond = if (enEchec) MaterialTheme.colorScheme.errorContainer

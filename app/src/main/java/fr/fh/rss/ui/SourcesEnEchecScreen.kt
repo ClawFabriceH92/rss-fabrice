@@ -107,7 +107,7 @@ fun EcranSourcesEnEchec(
                     maxLines = 2,
                 )
                 Text(
-                    EtatSource.resume(feed.errorSince, feed.errorCount, maintenant),
+                    EtatSource.resume(feed.errorSince, feed.errorCount, maintenant, feed.lastFetchAt),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

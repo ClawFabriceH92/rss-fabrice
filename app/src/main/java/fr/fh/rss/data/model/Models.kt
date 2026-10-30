@@ -40,4 +40,6 @@ data class RefreshSummary(
     val sources: Int = 0,
     val nouveaux: Int = 0,
     val echecs: List<Pair<String, String>> = emptyList(),
+    /** Sources laissées au repos après plusieurs échecs consécutifs. */
+    val enPause: Int = 0,
 )

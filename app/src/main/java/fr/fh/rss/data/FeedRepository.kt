@@ -173,11 +173,24 @@ class FeedRepository(
     suspend fun refreshAll(paralleles: Int = 4): RefreshSummary = coroutineScope {
         val sources = feedDao.all()
         if (sources.isEmpty()) return@coroutineScope RefreshSummary()
+
+        // Une source qui vient d'échouer plusieurs fois de suite est laissée au
+        // repos : inutile de la réinterroger à chaque passage. Un essai manuel
+        // depuis l'écran des sources en échec ignore ce repos.
+        val maintenant = System.currentTimeMillis()
+        val auRepos = sources.filter {
+            EtatSource.doitAttendre(it.errorCount, it.lastFetchAt, maintenant)
+        }
+        val aCollecter = sources.filterNot { it in auRepos }
+        if (aCollecter.isEmpty()) {
+            return@coroutineScope RefreshSummary(sources = sources.size, enPause = auRepos.size)
+        }
+
         val permis = Semaphore(paralleles.coerceAtLeast(1))
         val total = java.util.concurrent.atomic.AtomicInteger(0)
         val echecs = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
 
-        val resultats = sources.map { feed ->
+        val resultats = aCollecter.map { feed ->
             async(Dispatchers.IO) {
                 permis.withPermit {
                     runCatching { refreshFeed(feed) }
@@ -194,7 +207,7 @@ class FeedRepository(
         }
         resultats.awaitAll()
         trimArchive()
-        RefreshSummary(sources.size, total.get(), echecs.toList())
+        RefreshSummary(sources.size, total.get(), echecs.toList(), auRepos.size)
     }
 
     suspend fun refreshById(feedId: Long): Int {

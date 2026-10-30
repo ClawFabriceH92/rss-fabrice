@@ -48,4 +48,44 @@ class EtatSourceTest {
         assertFalse(EtatSource.propositionDue(maintenant + 5 * jour, maintenant))
         assertEquals(0, EtatSource.joursEnEchec(maintenant + 5 * jour, maintenant))
     }
+
+    @Test
+    fun `une source mise au repos apres trois echecs n'est plus interrogee`() {
+        val ilYaUneHeure = maintenant - 60L * 60L * 1000L
+
+        assertFalse(EtatSource.doitAttendre(2, ilYaUneHeure, maintenant))
+        assertTrue(EtatSource.doitAttendre(3, ilYaUneHeure, maintenant))
+        assertTrue(EtatSource.doitAttendre(10, ilYaUneHeure, maintenant))
+    }
+
+    @Test
+    fun `le repos expire au bout de six heures`() {
+        val sixHeures = 6L * 60L * 60L * 1000L
+
+        assertTrue(EtatSource.doitAttendre(4, maintenant - sixHeures + 60_000L, maintenant))
+        assertFalse(EtatSource.doitAttendre(4, maintenant - sixHeures, maintenant))
+        assertFalse(EtatSource.doitAttendre(4, maintenant - 12 * sixHeures, maintenant))
+    }
+
+    @Test
+    fun `les minutes de repos restantes sont arrondies vers le haut`() {
+        val deuxHeures = 2L * 60L * 60L * 1000L
+
+        assertEquals(0, EtatSource.minutesDePause(1, maintenant, maintenant))
+        assertEquals(241, EtatSource.minutesDePause(3, maintenant - deuxHeures + 1, maintenant))
+        assertEquals(240, EtatSource.minutesDePause(3, maintenant - deuxHeures, maintenant))
+        assertEquals(0, EtatSource.minutesDePause(3, maintenant - 7L * 60L * 60L * 1000L, maintenant))
+    }
+
+    @Test
+    fun `le resume signale le repos en cours`() {
+        val texte = EtatSource.resume(
+            errorDepuis = maintenant - 60L * 60L * 1000L,
+            tentatives = 4,
+            maintenant = maintenant,
+            dernierEssai = maintenant - 60L * 60L * 1000L,
+        )
+        assertTrue(texte.contains("repos"))
+        assertTrue(texte.contains("5 h") || texte.contains("300 min") || texte.contains("min"))
+    }
 }

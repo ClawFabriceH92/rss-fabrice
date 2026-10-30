@@ -182,6 +182,10 @@ fun AppRoot(
 
     ModalNavigationDrawer(
         drawerState = tiroir,
+        // Le balayage horizontal ouvrait le tiroir au moindre mouvement de
+        // travers pendant un défilement vertical : le tiroir ne s'ouvre plus
+        // que par le bouton menu.
+        gesturesEnabled = false,
         drawerContent = {
             ModalDrawerSheet {
                 ContenuTiroir(

@@ -69,6 +69,20 @@ interface FeedDao {
         error: String?,
     )
 
+    /** Collecte réussie : la série d'échecs en cours est effacée. */
+    @Query(
+        "UPDATE feeds SET etag = :etag, lastModified = :lastModified, lastFetchAt = :at, " +
+            "lastError = NULL, errorSince = NULL, errorCount = 0 WHERE id = :id",
+    )
+    suspend fun marquerSucces(id: Long, etag: String?, lastModified: String?, at: Long)
+
+    /** Collecte en échec : on note le premier échec de la série et on compte. */
+    @Query(
+        "UPDATE feeds SET lastFetchAt = :at, lastError = :error, " +
+            "errorSince = COALESCE(errorSince, :at), errorCount = errorCount + 1 WHERE id = :id",
+    )
+    suspend fun marquerEchec(id: Long, at: Long, error: String)
+
     @Query("UPDATE feeds SET title = :title, siteUrl = :siteUrl WHERE id = :id")
     suspend fun updateMeta(id: Long, title: String, siteUrl: String?)
 

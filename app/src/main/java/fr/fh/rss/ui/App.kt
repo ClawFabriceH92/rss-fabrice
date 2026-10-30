@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CreateNewFolder
@@ -60,6 +61,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
@@ -104,6 +107,7 @@ import kotlinx.coroutines.launch
 sealed interface Ecran {
     data object Liste : Ecran
     data class Lecteur(val articleId: Long) : Ecran
+    data object Ia : Ecran
     data object Reglages : Ecran
 }
 
@@ -136,6 +140,12 @@ fun AppRoot(
     val message by vm.message.collectAsState()
     val reglages by vm.reglages.collectAsState()
     val majEtat by fr.fh.rss.update.UpdateManager.state.collectAsState()
+    val etatOllama by vm.ollamaEtat.collectAsState()
+    val synthese by vm.synthese.collectAsState()
+    val iaEnCours by vm.iaEnCours.collectAsState()
+    val resumes by vm.resumes.collectAsState()
+    val resumeEnCours by vm.resumeEnCours.collectAsState()
+    val modelesOllama by vm.modelesOllama.collectAsState()
     val bilan by vm.dernierBilan.collectAsState()
     var bilanVisible by remember { mutableStateOf(false) }
 
@@ -252,13 +262,17 @@ fun AppRoot(
                     TopAppBar(
                         title = {
                             Text(
-                                if (ecran is Ecran.Reglages) "Réglages" else selection.titre,
+                                when (ecran) {
+                                    is Ecran.Reglages -> "Réglages"
+                                    is Ecran.Ia -> "IA"
+                                    else -> selection.titre
+                                },
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         },
                         navigationIcon = {
-                            if (ecran == Ecran.Liste) {
+                            if (ecran == Ecran.Liste || ecran == Ecran.Ia) {
                                 IconButton(onClick = { portee.launch { tiroir.open() } }) {
                                     Icon(Icons.Default.Menu, contentDescription = "Menu")
                                 }
@@ -282,6 +296,24 @@ fun AppRoot(
                             }
                         },
                     )
+                }
+            },
+            bottomBar = {
+                if (ecran == Ecran.Liste || ecran == Ecran.Ia) {
+                    NavigationBar {
+                        NavigationBarItem(
+                            selected = ecran == Ecran.Liste,
+                            onClick = { ecran = Ecran.Liste },
+                            icon = { Icon(Icons.Default.RssFeed, contentDescription = null) },
+                            label = { Text("Articles") },
+                        )
+                        NavigationBarItem(
+                            selected = ecran == Ecran.Ia,
+                            onClick = { ecran = Ecran.Ia },
+                            icon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
+                            label = { Text("IA") },
+                        )
+                    }
                 }
             },
             floatingActionButton = {
@@ -313,10 +345,29 @@ fun AppRoot(
                         onRetour = { ecran = Ecran.Liste },
                     )
 
+                    Ecran.Ia -> EcranIa(
+                        articles = articles,
+                        titres = titres,
+                        reglages = reglages,
+                        etatOllama = etatOllama,
+                        synthese = synthese,
+                        syntheseEnCours = iaEnCours,
+                        resumes = resumes,
+                        resumeEnCours = resumeEnCours,
+                        onOuvrir = { ecran = Ecran.Lecteur(it.id) },
+                        onResumer = { vm.resumerArticle(it) },
+                        onSynthese = { vm.syntheseNonLus() },
+                        onEffacerSynthese = { vm.effacerSynthese() },
+                        onReglagesIa = { ecran = Ecran.Reglages },
+                    )
+
                     Ecran.Reglages -> EcranReglages(
                         vm = vm,
                         reglages = reglages,
                         nombreSources = sources.size,
+                        sourcesEnEchec = sources.filter { !it.lastError.isNullOrBlank() },
+                        modelesOllama = modelesOllama,
+                        etatOllama = etatOllama,
                     )
                 }
 
@@ -701,6 +752,7 @@ private fun ZoneArticles(
                             source = titres[article.feedId].orEmpty(),
                             grand = false,
                             withImage = true,
+                            extrait = extraitDe(article),
                             onOuvrir = { onOuvrir(article) },
                             onFavori = { onFavori(article) },
                         )
@@ -713,6 +765,7 @@ private fun ZoneArticles(
                                 source = titres[articles.first().feedId].orEmpty(),
                                 grand = true,
                                 withImage = true,
+                                extrait = extraitDe(articles.first()),
                                 onOuvrir = { onOuvrir(articles.first()) },
                                 onFavori = { onFavori(articles.first()) },
                             )
@@ -857,12 +910,26 @@ private fun LigneArticle(
     }
 }
 
+/** Deux lignes d'aperçu, sans analyse HTML : le texte stocké suffit. */
+private fun extraitDe(article: ArticleEntity): String {
+    val brut = article.textContent
+        ?: article.contentHtml
+        ?: article.summaryHtml
+        ?: return ""
+    return brut
+        .replace(Regex("<[^>]+>"), " ")
+        .replace('\u00a0', ' ')
+        .replace(Regex("\\s+"), " ")
+        .trim()
+}
+
 @Composable
 private fun CarteArticle(
     article: ArticleEntity,
     source: String,
     grand: Boolean,
     withImage: Boolean,
+    extrait: String = "",
     onOuvrir: () -> Unit,
     onFavori: () -> Unit,
 ) {
@@ -876,8 +943,38 @@ private fun CarteArticle(
             else MaterialTheme.colorScheme.surface,
         ),
     ) {
+        // Bandeau toujours présent, pleine largeur : avec l'image du flux quand
+        // il y en a une, sinon un aplat discret avec le nom de la source. C'est
+        // ce qui distingue franchement la vue Cartes de la vue Liste.
+        val hauteurBandeau = if (grand) 190 else 110
         if (withImage && !article.imageUrl.isNullOrBlank()) {
-            Vignette(article.imageUrl, if (grand) 200 else 150, pleineLargeur = true)
+            Vignette(article.imageUrl, hauteurBandeau, pleineLargeur = true)
+        } else {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(hauteurBandeau.dp)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Default.RssFeed,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                    if (source.isNotBlank()) {
+                        Text(
+                            source,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
         }
         Column(Modifier.padding(14.dp)) {
             Text(
@@ -888,6 +985,16 @@ private fun CarteArticle(
                 maxLines = if (grand) 3 else 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (extrait.isNotBlank()) {
+                Text(
+                    extrait,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
             Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "$source  ·  ${dateCourte(article.publishedAt)}",

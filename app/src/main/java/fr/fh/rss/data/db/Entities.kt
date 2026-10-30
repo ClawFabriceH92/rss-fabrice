@@ -29,6 +29,10 @@ data class FeedEntity(
     val lastModified: String? = null,
     val lastFetchAt: Long = 0L,
     val lastError: String? = null,
+    /** Début de la série d'échecs en cours, null dès qu'une collecte réussit. */
+    val errorSince: Long? = null,
+    /** Nombre d'échecs consécutifs de la série en cours. */
+    val errorCount: Int = 0,
     val addedAt: Long = System.currentTimeMillis(),
 )
 

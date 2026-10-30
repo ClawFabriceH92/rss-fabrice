@@ -59,6 +59,30 @@ et la recherche sont testés sur JVM.
 ./gradlew assembleRelease            # APK signé
 ```
 
+## Onglet IA (v1.1.0)
+
+L'onglet IA sépare deux choses :
+
+- **Sans modèle** : regroupement des dépêches identiques publiées par plusieurs
+  sources (titre normalisé, préfixes `DIRECT :`, `(AFP)` ignorés) et classement
+  par thème par mots-clés. Ces blocs s'affichent même hors connexion.
+- **Avec modèle local** : résumé d'un article (bouton dans le lecteur) et
+  synthèse des articles non lus, envoyés à un serveur **Ollama** du réseau
+  domestique. Adresse et modèle se règlent dans Réglages, section
+  « Intelligence artificielle » (défaut `http://192.168.0.162:11434`,
+  `ministral-3:8b`). Aucun texte d'article ne part vers un service extérieur.
+
+## Sources en échec
+
+Chaque échec de collecte est daté : `errorSince` (premier échec de la série) et
+`errorCount` (échecs consécutifs), remis à zéro dès qu'une collecte réussit
+(migration Room 1 → 2, sans perte des articles déjà stockés). Réglages,
+section « Sources en échec » liste les sources fautives avec l'erreur, un
+bouton **Réessayer** et un bouton **Supprimer**. Une source n'est signalée
+comme « à examiner » qu'après **8 jours** d'échec consécutif
+(`EtatSource.SEUIL_PROPOSITION_JOURS`) : une panne d'une heure ne déclenche
+rien, et aucune suppression n'est automatique.
+
 ## Signature et mise à jour
 
 Le keystore de release vit hors du dépôt (`/root/.secrets/keystores-android/`)

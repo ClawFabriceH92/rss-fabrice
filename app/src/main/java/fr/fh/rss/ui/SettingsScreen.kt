@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -21,12 +23,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -41,8 +47,15 @@ fun EcranReglages(
     vm: MainViewModel,
     reglages: Reglages,
     nombreSources: Int,
+    sourcesEnEchec: List<fr.fh.rss.data.db.FeedEntity> = emptyList(),
+    modelesOllama: List<String> = emptyList(),
+    etatOllama: String? = null,
 ) {
     val contexte = LocalContext.current
+    var urlSaisie by remember(reglages.ollamaUrl) {
+        androidx.compose.runtime.mutableStateOf(reglages.ollamaUrl)
+    }
+    val maintenant = remember(sourcesEnEchec) { System.currentTimeMillis() }
 
     val selecteurOpml = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -143,6 +156,137 @@ fun EcranReglages(
                                 onClick = { vm.setArchiveMax(valeur) },
                                 label = { Text("${valeur / 1000}k") },
                             )
+                        }
+                    }
+                }
+            }
+
+            item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+            item { Titre("Sources en échec") }
+
+            item {
+                Text(
+                    "Une source doit échouer ${fr.fh.rss.data.EtatSource.SEUIL_PROPOSITION_JOURS} jours " +
+                        "de suite avant d'être proposée à la suppression. Rien n'est supprimé " +
+                        "sans ton accord.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
+
+            if (sourcesEnEchec.isEmpty()) {
+                item {
+                    Text(
+                        "Aucune source en échec.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                    )
+                }
+            }
+
+            for (feed in sourcesEnEchec) {
+                item(key = "erreur-${feed.id}") {
+                    val due = fr.fh.rss.data.EtatSource.propositionDue(feed.errorSince, maintenant)
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                feed.title,
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 2,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (due) {
+                                Text(
+                                    "À examiner",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                        Text(
+                            feed.lastError ?: "erreur inconnue",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 2,
+                        )
+                        Text(
+                            fr.fh.rss.data.EtatSource.resume(
+                                feed.errorSince,
+                                feed.errorCount,
+                                maintenant,
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row {
+                            TextButton(onClick = { vm.reessayerSource(feed.id) }) {
+                                Text("Réessayer")
+                            }
+                            TextButton(onClick = { vm.supprimerFlux(feed.id) }) {
+                                Text("Supprimer la source")
+                            }
+                        }
+                    }
+                }
+            }
+
+            item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+            item { Titre("Intelligence artificielle") }
+
+            item {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+                    Text(
+                        "Les résumés et la synthèse passent par Ollama, sur le réseau de la maison. " +
+                            "Aucun texte d'article n'est envoyé à un service extérieur.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = urlSaisie,
+                        onValueChange = { urlSaisie = it },
+                        label = { Text("Adresse du serveur Ollama") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "Modèle utilisé : ${reglages.ollamaModele}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(onClick = {
+                            vm.setOllamaUrl(urlSaisie)
+                            vm.testerOllama()
+                        }) {
+                            Text("Enregistrer et tester")
+                        }
+                    }
+                    if (!etatOllama.isNullOrBlank()) {
+                        Text(
+                            etatOllama,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                    if (modelesOllama.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(top = 8.dp),
+                        ) {
+                            for (modele in modelesOllama) {
+                                FilterChip(
+                                    selected = reglages.ollamaModele == modele,
+                                    onClick = { vm.setOllamaModele(modele) },
+                                    label = { Text(modele) },
+                                )
+                            }
                         }
                     }
                 }

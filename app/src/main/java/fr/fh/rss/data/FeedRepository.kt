@@ -144,7 +144,7 @@ class FeedRepository(
     suspend fun refreshFeed(feed: FeedEntity): Int = withContext(Dispatchers.IO) {
         val reponse = http.get(feed.url, feed.etag, feed.lastModified)
         if (reponse.notModified) {
-            feedDao.updateFetchState(feed.id, feed.etag, feed.lastModified, System.currentTimeMillis(), null)
+            feedDao.marquerSucces(feed.id, feed.etag, feed.lastModified, System.currentTimeMillis())
             return@withContext 0
         }
         if (!reponse.ok) {
@@ -160,12 +160,11 @@ class FeedRepository(
                 feedDao.updateMeta(feed.id, flux.title, flux.siteUrl ?: feed.siteUrl)
             }
         }
-        feedDao.updateFetchState(
+        feedDao.marquerSucces(
             feed.id,
             reponse.etag ?: feed.etag,
             reponse.lastModified ?: feed.lastModified,
             System.currentTimeMillis(),
-            null,
         )
         nouveaux
     }
@@ -186,13 +185,7 @@ class FeedRepository(
                             onSuccess = { total.addAndGet(it) },
                             onFailure = { erreur ->
                                 val detail = erreur.message ?: erreur.javaClass.simpleName
-                                feedDao.updateFetchState(
-                                    feed.id,
-                                    feed.etag,
-                                    feed.lastModified,
-                                    feed.lastFetchAt,
-                                    detail,
-                                )
+                                feedDao.marquerEchec(feed.id, System.currentTimeMillis(), detail)
                                 echecs.add(feed.title to detail)
                             },
                         )
@@ -207,8 +200,28 @@ class FeedRepository(
     suspend fun refreshById(feedId: Long): Int {
         val feed = feedDao.byId(feedId) ?: return 0
         return runCatching { refreshFeed(feed) }.getOrElse { erreur ->
-            throw IOException(erreur.message ?: "échec de la collecte")
+            val detail = erreur.message ?: "échec de la collecte"
+            feedDao.marquerEchec(feedId, System.currentTimeMillis(), detail)
+            throw IOException(detail)
         }
+    }
+
+    /**
+     * Sources dont la série d'échecs a atteint le seuil de proposition. Rien
+     * n'est supprimé ici : l'utilisateur décide depuis les réglages.
+     */
+    suspend fun sourcesAExaminer(maintenant: Long = System.currentTimeMillis()): List<FeedEntity> =
+        withContext(Dispatchers.IO) {
+            feedDao.all()
+                .filter { EtatSource.propositionDue(it.errorSince, maintenant) }
+                .sortedBy { it.errorSince ?: Long.MAX_VALUE }
+        }
+
+    /** Sources en échec, quelle que soit l'ancienneté de la série. */
+    suspend fun sourcesEnEchec(): List<FeedEntity> = withContext(Dispatchers.IO) {
+        feedDao.all()
+            .filter { !it.lastError.isNullOrBlank() }
+            .sortedBy { it.errorSince ?: Long.MAX_VALUE }
     }
 
     // --------------------------------------------------------------- OPML

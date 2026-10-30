@@ -80,6 +80,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    // ------------------------------------------------------------ onglet IA
+    private val ollama = fr.fh.rss.data.net.Ollama()
+
+    private val _resumes = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val resumes: StateFlow<Map<Long, String>> = _resumes.asStateFlow()
+
+    private val _resumeEnCours = MutableStateFlow<Long?>(null)
+    val resumeEnCours: StateFlow<Long?> = _resumeEnCours.asStateFlow()
+
+    private val _synthese = MutableStateFlow<String?>(null)
+    val synthese: StateFlow<String?> = _synthese.asStateFlow()
+
+    private val _iaEnCours = MutableStateFlow(false)
+    val iaEnCours: StateFlow<Boolean> = _iaEnCours.asStateFlow()
+
+    private val _modelesOllama = MutableStateFlow<List<String>>(emptyList())
+    val modelesOllama: StateFlow<List<String>> = _modelesOllama.asStateFlow()
+
+    private val _ollamaEtat = MutableStateFlow<String?>(null)
+    val ollamaEtat: StateFlow<String?> = _ollamaEtat.asStateFlow()
+
     private var collecteFaite = false
 
     // ------------------------------------------------------------ actions
@@ -104,10 +125,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _enCours.value = false
             // Le succès passe par la pastille animée ; la barre de messages est
             // réservée aux échecs, pour ne pas dire deux fois la même chose.
-            _message.value = if (bilan.echecs.isEmpty()) {
-                null
-            } else {
-                "${bilan.echecs.size} source(s) en échec : " +
+            // Une source qui échoue depuis le seuil de proposition est signalée
+            // à part : c'est une décision à prendre, pas une panne passagère.
+            val propositions = runCatching { depot.sourcesAExaminer() }.getOrDefault(emptyList())
+            _message.value = when {
+                propositions.isNotEmpty() ->
+                    "${propositions.size} source(s) en échec depuis " +
+                        "${fr.fh.rss.data.EtatSource.SEUIL_PROPOSITION_JOURS} jours ou plus : " +
+                        "voir Réglages, Sources en échec."
+                bilan.echecs.isEmpty() -> null
+                else -> "${bilan.echecs.size} source(s) en échec : " +
                     bilan.echecs.take(2).joinToString(", ") { "${it.first} (${it.second})" }
             }
             _dernierBilan.value = bilan
@@ -242,6 +269,129 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ----------------------------------------------------------- réglages
+
+    // ------------------------------------------------------ sources en échec
+
+    /** Nouvel essai immédiat sur une source en échec. */
+    fun reessayerSource(feedId: Long) {
+        viewModelScope.launch {
+            runCatching { depot.refreshById(feedId) }
+                .onSuccess { _message.value = "Source actualisée." }
+                .onFailure { _message.value = "Échec : ${it.message ?: "collecte impossible"}" }
+        }
+    }
+
+    // ------------------------------------------------------------- onglet IA
+
+    /** Résumé d'un article par le modèle local. */
+    fun resumerArticle(article: ArticleEntity) {
+        if (_resumeEnCours.value != null) return
+        _resumeEnCours.value = article.id
+        viewModelScope.launch {
+            val courant = reglages.value
+            val texte = buildString {
+                append(article.title)
+                append("\n\n")
+                append(
+                    article.textContent
+                        ?: fr.fh.rss.data.net.FeedParser.texteSimple(
+                            article.contentHtml ?: article.summaryHtml,
+                        ),
+                )
+            }
+            runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    ollama.demander(
+                        base = courant.ollamaUrl,
+                        modele = courant.ollamaModele,
+                        consigne = fr.fh.rss.data.net.Ollama.CONSIGNE_RESUME,
+                        contenu = texte,
+                        nombreTokens = 400,
+                    )
+                }
+            }.onSuccess { resume ->
+                _resumes.value = _resumes.value + (article.id to resume)
+                _ollamaEtat.value = "Connecté · ${courant.ollamaModele}"
+            }.onFailure { erreur ->
+                val detail = erreur.message ?: "modèle injoignable"
+                _ollamaEtat.value = "Injoignable : $detail"
+                _message.value = "Résumé impossible : $detail"
+            }
+            _resumeEnCours.value = null
+        }
+    }
+
+    /** Synthèse des titres non lus par le modèle local. */
+    fun syntheseNonLus() {
+        if (_iaEnCours.value) return
+        val nonLus = articles.value.filter { !it.isRead }.take(80)
+        if (nonLus.isEmpty()) {
+            _message.value = "Aucun article non lu à synthétiser."
+            return
+        }
+        _iaEnCours.value = true
+        viewModelScope.launch {
+            val courant = reglages.value
+            val contenu = nonLus.joinToString("\n") { "- ${it.title}" }
+            runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    ollama.demander(
+                        base = courant.ollamaUrl,
+                        modele = courant.ollamaModele,
+                        consigne = fr.fh.rss.data.net.Ollama.CONSIGNE_SYNTHESE,
+                        contenu = contenu,
+                        nombreTokens = 600,
+                    )
+                }
+            }.onSuccess { texte ->
+                _synthese.value = texte
+                _ollamaEtat.value = "Connecté · ${courant.ollamaModele}"
+            }.onFailure { erreur ->
+                val detail = erreur.message ?: "modèle injoignable"
+                _ollamaEtat.value = "Injoignable : $detail"
+                _message.value = "Synthèse impossible : $detail"
+            }
+            _iaEnCours.value = false
+        }
+    }
+
+    fun effacerSynthese() {
+        _synthese.value = null
+    }
+
+    /** Test de connexion au serveur Ollama et liste des modèles installés. */
+    fun testerOllama() {
+        viewModelScope.launch {
+            val courant = reglages.value
+            runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    ollama.modeles(courant.ollamaUrl)
+                }
+            }.onSuccess { liste ->
+                _modelesOllama.value = liste
+                _ollamaEtat.value = if (liste.isEmpty()) {
+                    "Serveur joignable, aucun modèle installé"
+                } else {
+                    "Connecté · ${liste.size} modèle(s)"
+                }
+                _message.value = if (liste.isEmpty()) {
+                    "Serveur joignable, aucun modèle installé."
+                } else {
+                    "Serveur joignable : ${liste.size} modèle(s)."
+                }
+            }.onFailure { erreur ->
+                _modelesOllama.value = emptyList()
+                val detail = erreur.message ?: "injoignable"
+                _ollamaEtat.value = "Injoignable : $detail"
+                _message.value = "Ollama injoignable : $detail"
+            }
+        }
+    }
+
+    fun setOllamaUrl(valeur: String) = viewModelScope.launch { reglagesDepot.setOllamaUrl(valeur) }
+
+    fun setOllamaModele(valeur: String) =
+        viewModelScope.launch { reglagesDepot.setOllamaModele(valeur) }
 
     fun setTheme(valeur: String) = viewModelScope.launch { reglagesDepot.setTheme(valeur) }
 

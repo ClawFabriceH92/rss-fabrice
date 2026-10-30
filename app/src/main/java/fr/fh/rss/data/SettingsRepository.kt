@@ -21,6 +21,8 @@ data class Reglages(
     val intervalleMinutes: Int = 60,      // 15 à 1440
     val wifiUniquement: Boolean = true,
     val archiveMax: Int = 20000,
+    val ollamaUrl: String = fr.fh.rss.data.net.Ollama.ADRESSE_DEFAUT,
+    val ollamaModele: String = fr.fh.rss.data.net.Ollama.MODELE_DEFAUT,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -32,6 +34,8 @@ class SettingsRepository(private val context: Context) {
         val intervalle = intPreferencesKey("intervalle_minutes")
         val wifi = booleanPreferencesKey("wifi_uniquement")
         val archive = intPreferencesKey("archive_max")
+        val ollamaUrl = stringPreferencesKey("ollama_url")
+        val ollamaModele = stringPreferencesKey("ollama_modele")
     }
 
     val flow: Flow<Reglages> = context.dataStore.data.map { p ->
@@ -42,8 +46,16 @@ class SettingsRepository(private val context: Context) {
             intervalleMinutes = p[Cles.intervalle] ?: 60,
             wifiUniquement = p[Cles.wifi] ?: true,
             archiveMax = p[Cles.archive] ?: 20000,
+            ollamaUrl = p[Cles.ollamaUrl] ?: fr.fh.rss.data.net.Ollama.ADRESSE_DEFAUT,
+            ollamaModele = p[Cles.ollamaModele] ?: fr.fh.rss.data.net.Ollama.MODELE_DEFAUT,
         )
     }
+
+    suspend fun setOllamaUrl(valeur: String) =
+        context.dataStore.edit { it[Cles.ollamaUrl] = valeur.trim().ifEmpty { fr.fh.rss.data.net.Ollama.ADRESSE_DEFAUT } }
+
+    suspend fun setOllamaModele(valeur: String) =
+        context.dataStore.edit { it[Cles.ollamaModele] = valeur.trim() }
 
     suspend fun setTheme(valeur: String) = context.dataStore.edit { it[Cles.theme] = valeur }
 

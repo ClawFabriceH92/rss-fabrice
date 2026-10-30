@@ -8,7 +8,9 @@ import fr.fh.rss.data.net.TitreContenu
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Share
@@ -32,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 
 /** Lecteur intégré : HTML nettoyé, JavaScript désactivé. */
@@ -44,6 +47,8 @@ fun EcranLecteur(
 ) {
     val article by vm.observerArticle(articleId).collectAsState(initial = null)
     val sources by vm.sources.collectAsState()
+    val resumes by vm.resumes.collectAsState()
+    val resumeEnCours by vm.resumeEnCours.collectAsState()
     val contexte = LocalContext.current
 
     LaunchedEffect(articleId) {
@@ -76,6 +81,19 @@ fun EcranLecteur(
                     }
                 },
                 actions = {
+                    if (resumeEnCours == courant.id) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.padding(horizontal = 12.dp).size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        IconButton(onClick = { vm.resumerArticle(courant) }) {
+                            Icon(
+                                Icons.Default.AutoAwesome,
+                                contentDescription = "Résumer avec l'IA locale",
+                            )
+                        }
+                    }
                     IconButton(onClick = { vm.basculerFavori(courant.id, !courant.isStarred) }) {
                         Icon(
                             if (courant.isStarred) Icons.Default.Star else Icons.Default.StarBorder,
@@ -141,6 +159,12 @@ fun EcranLecteur(
             append("pre,code{white-space:pre-wrap;word-break:break-word;font-size:14px;}")
             append("blockquote{border-left:3px solid #").append(hex(couleurAccent))
             append(";margin:12px 0;padding-left:12px;}")
+            append(".resume{font-family:sans-serif;font-size:15px;line-height:1.5;")
+            append("padding:12px 14px;margin:0 0 18px 0;border-radius:10px;")
+            append("border:1px solid #").append(hex(couleurAccent)).append(";}")
+            append(".resume b{display:block;font-size:12px;letter-spacing:.04em;")
+            append("text-transform:uppercase;color:#").append(hex(couleurAccent))
+            append(";margin-bottom:6px;}")
             append("</style></head><body>")
             append("<h1>").append(TextUtils.htmlEncode(courant.title)).append("</h1>")
             append("<p class=\"meta\">")
@@ -150,6 +174,12 @@ fun EcranLecteur(
                 append(" · ").append(TextUtils.htmlEncode(courant.author))
             }
             append("</p>")
+            val resumeLocal = resumes[courant.id]
+            if (!resumeLocal.isNullOrBlank()) {
+                append("<div class=\"resume\"><b>Résumé local</b>")
+                append(TextUtils.htmlEncode(resumeLocal).replace("\n", "<br>"))
+                append("</div>")
+            }
             append(contenuSansTitre)
             append("</body></html>")
         }

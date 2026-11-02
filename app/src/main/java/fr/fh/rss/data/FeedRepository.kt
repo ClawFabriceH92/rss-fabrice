@@ -353,6 +353,18 @@ class FeedRepository(
         articleDao.pruneFts()
     }
 
+    /**
+     * Supprime plusieurs sources d'un coup (bouton « Tout supprimer » de l'écran
+     * Flux en erreur). Renvoie le nombre de sources effectivement retirées.
+     */
+    suspend fun deleteFeeds(feedIds: Collection<Long>): Int {
+        var supprimees = 0
+        for (id in feedIds.distinct()) {
+            runCatching { deleteFeed(id) }.onSuccess { supprimees++ }
+        }
+        return supprimees
+    }
+
     suspend fun deleteFolder(folderId: Long) {
         folderDao.detachFeeds(folderId)
         folderDao.delete(folderId)

@@ -266,6 +266,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Supprime d'un coup toutes les sources en échec (paramétrage, onglet
+     * « Flux en erreur »). Les articles déjà téléchargés partent avec elles.
+     */
+    fun supprimerFluxEnEchec(feedIds: List<Long>) {
+        if (feedIds.isEmpty()) return
+        viewModelScope.launch {
+            val supprimees = runCatching { depot.deleteFeeds(feedIds) }.getOrDefault(0)
+            val filtre = _selection.value.filtre
+            if (filtre is Filtre.Flux && filtre.id in feedIds) {
+                _selection.value = Selection(Filtre.Tous, "Tous les articles")
+            }
+            _message.value = when {
+                supprimees == 0 -> "Aucune source supprimée."
+                supprimees == 1 -> "1 source supprimée."
+                else -> "$supprimees sources supprimées."
+            }
+        }
+    }
+
     fun marquerSourceLue(feedId: Long) {
         viewModelScope.launch { depot.markFeedRead(feedId) }
     }

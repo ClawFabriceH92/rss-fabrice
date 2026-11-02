@@ -110,6 +110,7 @@ fun EcranReglages(
                     onReessayer = { vm.reessayerSource(it) },
                     onReessayerTout = { ids -> vm.reessayerToutesLesSources(ids) },
                     onSupprimer = { vm.supprimerFlux(it) },
+                    onSupprimerTout = { ids -> vm.supprimerFluxEnEchec(ids) },
                 )
             }
             return@Column

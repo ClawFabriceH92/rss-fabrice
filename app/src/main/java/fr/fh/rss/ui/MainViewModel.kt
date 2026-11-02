@@ -104,6 +104,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _enCours = MutableStateFlow(false)
     val enCours: StateFlow<Boolean> = _enCours.asStateFlow()
 
+    /** Avancement de la collecte : sources traitées / sources à traiter. */
+    private val _progres = MutableStateFlow<ProgresCollecte?>(null)
+    val progres: StateFlow<ProgresCollecte?> = _progres.asStateFlow()
+
     /** Dernier bilan de collecte : sert à la pastille animée de l'écran. */
     private val _dernierBilan = MutableStateFlow<RefreshSummary?>(null)
     val dernierBilan: StateFlow<RefreshSummary?> = _dernierBilan.asStateFlow()
@@ -166,9 +170,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _enCours.value = true
             _dernierBilan.value = null
-            val bilan = runCatching { depot.refreshAll() }
-                .getOrElse { RefreshSummary(echecs = listOf("collecte" to (it.message ?: "erreur"))) }
+            _progres.value = ProgresCollecte(0, 0)
+            val bilan = runCatching {
+                depot.refreshAll(onProgres = { faits, total ->
+                    _progres.value = ProgresCollecte(faits, total)
+                })
+            }.getOrElse { RefreshSummary(echecs = listOf("collecte" to (it.message ?: "erreur"))) }
             _enCours.value = false
+            _progres.value = null
             // Le succès passe par la pastille animée ; la barre de messages est
             // réservée aux échecs, pour ne pas dire deux fois la même chose.
             // Une source qui échoue depuis le seuil de proposition est signalée
@@ -537,4 +546,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setArchiveMax(nombre: Int) = viewModelScope.launch { reglagesDepot.setArchiveMax(nombre) }
+}
+
+/**
+ * Avancement d'une collecte : [faits] sources traitées sur [total] à traiter.
+ * [total] vaut 0 tant que la liste des sources n'est pas connue.
+ */
+data class ProgresCollecte(val faits: Int, val total: Int) {
+    /** Fraction accomplie, entre 0 et 1. */
+    val fraction: Float get() = if (total <= 0) 0f else (faits.toFloat() / total).coerceIn(0f, 1f)
 }

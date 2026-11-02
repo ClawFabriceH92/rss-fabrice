@@ -169,8 +169,17 @@ class FeedRepository(
         nouveaux
     }
 
-    /** Collecte de toutes les sources, avec parallélisme limité. */
-    suspend fun refreshAll(paralleles: Int = 4): RefreshSummary = coroutineScope {
+    /**
+     * Collecte de toutes les sources, avec parallélisme limité.
+     *
+     * [onProgres] est appelé après chaque source traitée : l'écran s'en sert
+     * pour afficher une progression chiffrée (« Collecte 8/45 »), qui reste
+     * lisible même quand les animations système sont désactivées.
+     */
+    suspend fun refreshAll(
+        paralleles: Int = 4,
+        onProgres: (faits: Int, total: Int) -> Unit = { _, _ -> },
+    ): RefreshSummary = coroutineScope {
         val sources = feedDao.all()
         if (sources.isEmpty()) return@coroutineScope RefreshSummary()
 
@@ -188,20 +197,29 @@ class FeedRepository(
 
         val permis = Semaphore(paralleles.coerceAtLeast(1))
         val total = java.util.concurrent.atomic.AtomicInteger(0)
+        val faits = java.util.concurrent.atomic.AtomicInteger(0)
         val echecs = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+
+        // Premier point de mesure avant tout travail : l'écran affiche
+        // « 0/N » plutôt qu'un indicateur muet.
+        onProgres(0, aCollecter.size)
 
         val resultats = aCollecter.map { feed ->
             async(Dispatchers.IO) {
-                permis.withPermit {
-                    runCatching { refreshFeed(feed) }
-                        .fold(
-                            onSuccess = { total.addAndGet(it) },
-                            onFailure = { erreur ->
-                                val detail = erreur.message ?: erreur.javaClass.simpleName
-                                feedDao.marquerEchec(feed.id, System.currentTimeMillis(), detail)
-                                echecs.add(feed.title to detail)
-                            },
-                        )
+                try {
+                    permis.withPermit {
+                        runCatching { refreshFeed(feed) }
+                            .fold(
+                                onSuccess = { total.addAndGet(it) },
+                                onFailure = { erreur ->
+                                    val detail = erreur.message ?: erreur.javaClass.simpleName
+                                    feedDao.marquerEchec(feed.id, System.currentTimeMillis(), detail)
+                                    echecs.add(feed.title to detail)
+                                },
+                            )
+                    }
+                } finally {
+                    onProgres(faits.incrementAndGet(), aCollecter.size)
                 }
             }
         }

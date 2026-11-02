@@ -58,7 +58,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -178,6 +178,7 @@ fun AppRoot(
     val nonLusDossier by vm.nonLusParDossier.collectAsState()
     val nonLusTotal by vm.nonLusTotal.collectAsState()
     val enCours by vm.enCours.collectAsState()
+    val progres by vm.progres.collectAsState()
     val message by vm.message.collectAsState()
     val reglages by vm.reglages.collectAsState()
     val majEtat by fr.fh.rss.update.UpdateManager.state.collectAsState()
@@ -543,16 +544,19 @@ fun AppRoot(
                     )
                 }
 
-                // Retour visuel de la collecte : fine barre pendant le
-                // téléchargement, puis pastille « à jour » qui apparaît en
-                // douceur et s'efface toute seule.
-                if (enCours) {
-                    LinearProgressIndicator(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .fillMaxWidth()
-                            .height(3.dp),
-                    )
+                // Retour visuel de la collecte : bandeau chiffré « Collecte 8/45 »
+                // avec un cercle de progression qui avance à chaque source
+                // traitée (lisible même animations système coupées), puis
+                // pastille « à jour » qui apparaît en douceur et s'efface.
+                AnimatedVisibility(
+                    visible = enCours,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 10.dp),
+                ) {
+                    BandeauCollecte(progres)
                 }
                 AnimatedVisibility(
                     visible = bilanVisible,
@@ -1246,6 +1250,45 @@ private fun Vignette(url: String?, hauteur: Int, pleineLargeur: Boolean = false)
             .height(hauteur.dp)
             .clip(RoundedCornerShape(if (pleineLargeur) 12.dp else 8.dp)),
     )
+}
+
+/**
+ * Bandeau de collecte : cercle de progression + compteur « Collecte 8/45 ».
+ * Le compteur avance à chaque source traitée, ce qui donne un retour visible
+ * même si les animations système sont désactivées.
+ */
+@Composable
+private fun BandeauCollecte(progres: ProgresCollecte?) {
+    val fond = MaterialTheme.colorScheme.secondaryContainer
+    val encre = MaterialTheme.colorScheme.onSecondaryContainer
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = fond,
+        tonalElevation = 3.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Row(
+            Modifier.padding(start = 12.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircularProgressIndicator(
+                progress = { progres?.fraction ?: 0f },
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.5.dp,
+                trackColor = encre.copy(alpha = 0.18f),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = when {
+                    progres == null || progres.total <= 0 -> "Collecte en cours…"
+                    progres.faits < progres.total -> "Collecte ${progres.faits}/${progres.total}"
+                    else -> "Collecte ${progres.total}/${progres.total}"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = encre,
+            )
+        }
+    }
 }
 
 /**

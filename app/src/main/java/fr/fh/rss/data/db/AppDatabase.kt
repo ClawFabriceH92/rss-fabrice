@@ -10,7 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [FolderEntity::class, FeedEntity::class, ArticleEntity::class, ArticleFts::class],
     version = 2,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun folderDao(): FolderDao
@@ -31,10 +31,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Aucun filet destructif : une montée de version sans Migration doit
+         * échouer en développement, pas effacer abonnements et favoris chez
+         * l'utilisateur. La prochaine version (3) devra fournir sa Migration.
+         */
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "rss.db")
                 .addMigrations(MIGRATION_1_2)
-                .fallbackToDestructiveMigration()
                 .build()
     }
 }

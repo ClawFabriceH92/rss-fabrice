@@ -107,7 +107,7 @@ fun EcranLecteur(
                             strokeWidth = 2.dp,
                         )
                     } else {
-                        IconButton(onClick = { vm.resumerArticle(courant) }) {
+                        IconButton(onClick = { vm.resumerArticle(courant.id) }) {
                             Icon(
                                 Icons.Default.AutoAwesome,
                                 contentDescription = "Résumer avec l'IA locale",

@@ -2,6 +2,7 @@ package fr.fh.rss
 
 import android.app.Application
 import android.content.Context
+import androidx.room.withTransaction
 import fr.fh.rss.data.FeedRepository
 import fr.fh.rss.data.SettingsRepository
 import fr.fh.rss.data.db.AppDatabase
@@ -33,6 +34,7 @@ class AppContainer(context: Context) {
             articleDao = base.articleDao(),
             http = http,
             archiveMax = { settings.flow.first().archiveMax },
+            transaction = { bloc -> base.withTransaction { bloc() } },
         )
     }
 }

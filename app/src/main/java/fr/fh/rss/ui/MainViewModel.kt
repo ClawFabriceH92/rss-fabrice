@@ -7,6 +7,7 @@ import fr.fh.rss.RssApp
 import fr.fh.rss.data.Filtre
 import fr.fh.rss.data.Reglages
 import fr.fh.rss.data.db.ArticleEntity
+import fr.fh.rss.data.db.ArticleLigne
 import fr.fh.rss.data.db.FeedEntity
 import fr.fh.rss.data.db.FolderEntity
 import fr.fh.rss.data.model.AddResult
@@ -70,7 +71,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _limite = MutableStateFlow(LIMITE_PAGE)
     val limite: StateFlow<Int> = _limite.asStateFlow()
 
-    val articles: StateFlow<List<ArticleEntity>> =
+    val articles: StateFlow<List<ArticleLigne>> =
         combine(_selection, _recherche, _limite) { sel, requete, limite ->
             Triple(sel, requete, limite)
         }
@@ -85,7 +86,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * sources n'apparaît qu'une fois. `articles` reste la liste brute, dont
      * l'onglet IA a besoin pour montrer qui a publié quoi.
      */
-    val articlesAffiches: StateFlow<List<ArticleEntity>> = articles
+    val articlesAffiches: StateFlow<List<ArticleLigne>> = articles
         .map { fr.fh.rss.data.Regroupement.dedoublonner(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -297,7 +298,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun basculerLu(article: ArticleEntity) {
+    fun basculerLu(article: ArticleLigne) {
         viewModelScope.launch { depot.setRead(article.id, !article.isRead) }
     }
 
@@ -305,7 +306,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { depot.setRead(articleId, true) }
     }
 
-    fun basculerFavori(article: ArticleEntity) {
+    fun basculerFavori(article: ArticleLigne) {
         viewModelScope.launch { depot.setStarred(article.id, !article.isStarred) }
     }
 
@@ -384,10 +385,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         .trim()
 
     /** Résumé d'un article par le modèle local. */
-    fun resumerArticle(article: ArticleEntity) {
+    fun resumerArticle(articleId: Long) {
         if (_resumeEnCours.value != null) return
-        _resumeEnCours.value = article.id
+        _resumeEnCours.value = articleId
         viewModelScope.launch {
+            // Les listes ne portent que des extraits : le résumé lit l'article complet.
+            val article = depot.article(articleId)
+            if (article == null) {
+                _resumeEnCours.value = null
+                return@launch
+            }
             val courant = reglages.value
             val texte = buildString {
                 append(article.title)

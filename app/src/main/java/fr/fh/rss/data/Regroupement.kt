@@ -1,5 +1,7 @@
 package fr.fh.rss.data
 
+import fr.fh.rss.data.db.ArticleRegroupable
+
 /**
  * Regroupement des articles pour l'onglet IA : dépêches identiques publiées par
  * plusieurs sources, puis classement par thème.
@@ -10,8 +12,8 @@ package fr.fh.rss.data
 object Regroupement {
 
     /** Un article retenu, avec les sources qui ont publié la même dépêche. */
-    data class Groupe(
-        val article: fr.fh.rss.data.db.ArticleEntity,
+    data class Groupe<T : ArticleRegroupable>(
+        val article: T,
         val sources: List<String>,
     ) {
         val nombreSources: Int get() = sources.size
@@ -45,11 +47,11 @@ object Regroupement {
      * L'ordre d'entrée est conservé (l'appelant passe la liste déjà triée par
      * date décroissante) : le premier article du groupe est le plus récent.
      */
-    fun regrouper(
-        articles: List<fr.fh.rss.data.db.ArticleEntity>,
+    fun <T : ArticleRegroupable> regrouper(
+        articles: List<T>,
         titresSources: Map<Long, String>,
-    ): List<Groupe> {
-        val parTitre = LinkedHashMap<String, MutableList<fr.fh.rss.data.db.ArticleEntity>>()
+    ): List<Groupe<T>> {
+        val parTitre = LinkedHashMap<String, MutableList<T>>()
         for (article in articles) {
             val cle = normaliserTitre(article.title)
             if (cle.isEmpty()) {
@@ -66,7 +68,7 @@ object Regroupement {
     }
 
     /** Nombre de dépêches en double repérées dans le lot. */
-    fun nombreDoublons(groupes: List<Groupe>): Int = groupes.count { it.doublon }
+    fun nombreDoublons(groupes: List<Groupe<*>>): Int = groupes.count { it.doublon }
 
     // ------------------------------------------------------------- doublons
 
@@ -111,7 +113,7 @@ object Regroupement {
     data class AutreVersion(val articleId: Long, val source: String)
 
     /** Clés d'identité d'un article : adresse nettoyée et titre significatif. */
-    private fun cles(article: fr.fh.rss.data.db.ArticleEntity): List<String> = buildList {
+    private fun cles(article: ArticleRegroupable): List<String> = buildList {
         cleUrl(article.url)?.let { add("url:$it") }
         val titre = normaliserTitre(article.title)
         if (titre.length >= LONGUEUR_TITRE_CLE) add("titre:$titre")
@@ -122,10 +124,10 @@ object Regroupement {
      * afin d'afficher « vu aussi sur … » dans la liste.
      */
     fun autresVersions(
-        articles: List<fr.fh.rss.data.db.ArticleEntity>,
+        articles: List<ArticleRegroupable>,
         titresSources: Map<Long, String>,
     ): Map<Long, List<AutreVersion>> {
-        val parCle = HashMap<String, MutableList<fr.fh.rss.data.db.ArticleEntity>>()
+        val parCle = HashMap<String, MutableList<ArticleRegroupable>>()
         for (article in articles) {
             for (cle in cles(article)) {
                 parCle.getOrPut(cle) { mutableListOf() }.add(article)
@@ -158,11 +160,11 @@ object Regroupement {
      * pas être un intitulé générique). Un article sans adresse ni titre
      * exploitable est toujours conservé.
      */
-    fun dedoublonner(
-        articles: List<fr.fh.rss.data.db.ArticleEntity>,
-    ): List<fr.fh.rss.data.db.ArticleEntity> {
+    fun <T : ArticleRegroupable> dedoublonner(
+        articles: List<T>,
+    ): List<T> {
         val vues = HashSet<String>()
-        val gardes = ArrayList<fr.fh.rss.data.db.ArticleEntity>(articles.size)
+        val gardes = ArrayList<T>(articles.size)
         for (article in articles) {
             val cles = cles(article)
             if (cles.isEmpty()) {
@@ -237,10 +239,10 @@ object Regroupement {
     }
 
     /** Articles classés par thème, seuls les thèmes non vides sont rendus. */
-    fun parTheme(groupes: List<Groupe>): List<Pair<String, List<Groupe>>> {
-        val seaux = LinkedHashMap<String, MutableList<Groupe>>()
+    fun <T : ArticleRegroupable> parTheme(groupes: List<Groupe<T>>): List<Pair<String, List<Groupe<T>>>> {
+        val seaux = LinkedHashMap<String, MutableList<Groupe<T>>>()
         for (groupe in groupes) {
-            val texte = groupe.article.title + " " + (groupe.article.textContent.orEmpty().take(600))
+            val texte = groupe.article.title + " " + groupe.article.texteApercu
             val theme = themeDe(texte)
             seaux.getOrPut(theme) { mutableListOf() }.add(groupe)
         }

@@ -3,6 +3,7 @@ package fr.fh.rss.data.db
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Fts4
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
@@ -46,11 +47,11 @@ data class FeedEntity(
     ],
 )
 data class ArticleEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val feedId: Long,
+    @PrimaryKey(autoGenerate = true) override val id: Long = 0,
+    override val feedId: Long,
     val guid: String,
-    val url: String? = null,
-    val title: String,
+    override val url: String? = null,
+    override val title: String,
     val author: String? = null,
     val publishedAt: Long = 0L,
     val fetchedAt: Long = System.currentTimeMillis(),
@@ -61,7 +62,43 @@ data class ArticleEntity(
     val isRead: Boolean = false,
     val isStarred: Boolean = false,
     val dedupHash: String = "",
-)
+) : ArticleRegroupable {
+    @get:Ignore
+    override val texteApercu: String get() = textContent.orEmpty().take(600)
+}
+
+/** Ce dont le regroupement (doublons, « vu aussi sur », thèmes) a besoin d'un article. */
+interface ArticleRegroupable {
+    val id: Long
+    val feedId: Long
+    val title: String
+    val url: String?
+
+    /** Début du texte, assez long pour deviner le thème. */
+    val texteApercu: String
+}
+
+/**
+ * Projection légère pour les listes : tout sauf les corps (HTML et texte
+ * complet). [extrait] est limité à 400 caractères par la requête ; l'article
+ * complet se lit avec [ArticleEntity] (lecteur, résumé IA).
+ * [url] n'est pas dans la liste affichée, mais le dédoublonnage et « vu aussi
+ * sur » comparent les adresses.
+ */
+data class ArticleLigne(
+    override val id: Long,
+    override val feedId: Long,
+    override val title: String,
+    override val url: String?,
+    val author: String?,
+    val publishedAt: Long,
+    val imageUrl: String?,
+    val isRead: Boolean,
+    val isStarred: Boolean,
+    val extrait: String,
+) : ArticleRegroupable {
+    override val texteApercu: String get() = extrait
+}
 
 /**
  * Index plein texte. Alimenté et nettoyé par le dépôt : l'identifiant de

@@ -34,6 +34,10 @@ class FeedRepository(
     private val articleDao: ArticleDao,
     private val http: Http,
     private val archiveMax: suspend () -> Int = { 20000 },
+    /** Exécute le bloc dans une transaction (Room en production, appel direct en test). */
+    private val transaction: suspend (suspend () -> Int) -> Int = { bloc -> bloc() },
+    /** Extraction du texte d'un corps HTML ; injectable pour vérifier qu'elle est évitée. */
+    private val texteDe: (String?) -> String = FeedParser::texteSimple,
 ) {
 
     data class ImportResult(val sources: Int, val dossiers: Int)
@@ -108,11 +112,19 @@ class FeedRepository(
 
     // ----------------------------------------------------------- collecter
 
-    private suspend fun enregistrer(feedId: Long, items: List<fr.fh.rss.data.model.ParsedItem>): Int {
-        var nouveaux = 0
+    /**
+     * Enregistre les items d'un flux. Les guid déjà connus sont écartés avant
+     * toute analyse du HTML, puis les nouveaux articles (et leur index plein
+     * texte) sont écrits en une seule transaction.
+     */
+    internal suspend fun enregistrer(feedId: Long, items: List<fr.fh.rss.data.model.ParsedItem>): Int {
+        val connus = articleDao.guids(feedId).toHashSet()
+        val aInserer = ArrayList<ArticleEntity>()
         for (item in items) {
-            val texte = FeedParser.texteSimple(item.contentHtml ?: item.summaryHtml)
-            val article = ArticleEntity(
+            // add() renvoie false si le guid est déjà connu ou répété dans le même flux.
+            if (!connus.add(item.guid)) continue
+            val texte = texteDe(item.contentHtml ?: item.summaryHtml)
+            aInserer += ArticleEntity(
                 feedId = feedId,
                 guid = item.guid,
                 url = item.url,
@@ -125,19 +137,25 @@ class FeedRepository(
                 imageUrl = item.imageUrl,
                 dedupHash = empreinte(item.title.lowercase() + "|" + (item.url ?: "")),
             )
-            val id = articleDao.insert(article)
-            if (id > 0) {
-                articleDao.insertFts(
-                    ArticleFts(
-                        rowId = id,
-                        title = article.title,
-                        body = article.textContent.orEmpty(),
-                    ),
-                )
-                nouveaux++
-            }
         }
-        return nouveaux
+        if (aInserer.isEmpty()) return 0
+        return transaction {
+            var nouveaux = 0
+            for (article in aInserer) {
+                val id = articleDao.insert(article)
+                if (id > 0) {
+                    articleDao.insertFts(
+                        ArticleFts(
+                            rowId = id,
+                            title = article.title,
+                            body = article.textContent.orEmpty(),
+                        ),
+                    )
+                    nouveaux++
+                }
+            }
+            nouveaux
+        }
     }
 
     /** Collecte d'une source. Renvoie le nombre de nouveaux articles. */
@@ -320,6 +338,9 @@ class FeedRepository(
 
     // ------------------------------------------------------------ articles
 
+    /** Article complet (corps compris), pour le lecteur et les résumés IA. */
+    suspend fun article(id: Long): ArticleEntity? = articleDao.byId(id)
+
     /** Télécharge le texte complet d'un article (mode lecture hors connexion). */
     suspend fun fetchFullContent(articleId: Long): Boolean = withContext(Dispatchers.IO) {
         val article = articleDao.byId(articleId) ?: return@withContext false
@@ -336,7 +357,7 @@ class FeedRepository(
 
     /** Titres des derniers articles non lus, pour l'aperçu de la notification. */
     suspend fun derniersTitresNonLus(limite: Int = 3): List<String> =
-        runCatching { articleDao.derniersNonLus(limite).map { it.title } }.getOrDefault(emptyList())
+        runCatching { articleDao.titresNonLus(limite) }.getOrDefault(emptyList())
 
     suspend fun trimArchive() {
         val limite = archiveMax()

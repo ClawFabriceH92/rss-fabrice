@@ -102,7 +102,7 @@ import androidx.compose.ui.unit.dp
 import fr.fh.rss.data.Filtre
 import fr.fh.rss.data.Regroupement
 import fr.fh.rss.data.Reglages
-import fr.fh.rss.data.db.ArticleEntity
+import fr.fh.rss.data.db.ArticleLigne
 import fr.fh.rss.data.db.FeedEntity
 import fr.fh.rss.data.db.FolderEntity
 import fr.fh.rss.data.model.RefreshSummary
@@ -523,7 +523,7 @@ fun AppRoot(
                         resumes = resumes,
                         resumeEnCours = resumeEnCours,
                         onOuvrir = { ecran = Ecran.Lecteur(it.id) },
-                        onResumer = { vm.resumerArticle(it) },
+                        onResumer = { vm.resumerArticle(it.id) },
                         onSynthese = { vm.syntheseNonLus() },
                         onEffacerSynthese = { vm.effacerSynthese() },
                         onReglagesIa = {
@@ -892,14 +892,14 @@ private fun LigneSource(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ZoneArticles(
-    articles: List<ArticleEntity>,
+    articles: List<ArticleLigne>,
     titres: Map<Long, String>,
     vue: String,
     enCours: Boolean,
     onRafraichir: () -> Unit,
-    onOuvrir: (ArticleEntity) -> Unit,
-    onBasculerLu: (ArticleEntity) -> Unit,
-    onFavori: (ArticleEntity) -> Unit,
+    onOuvrir: (ArticleLigne) -> Unit,
+    onBasculerLu: (ArticleLigne) -> Unit,
+    onFavori: (ArticleLigne) -> Unit,
     autres: Map<Long, List<Regroupement.AutreVersion>> = emptyMap(),
     peutChargerPlus: Boolean = false,
     onChargerPlus: () -> Unit = {},
@@ -1011,7 +1011,7 @@ private fun ZoneArticles(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LigneBalayable(
-    article: ArticleEntity,
+    article: ArticleLigne,
     source: String,
     withImage: Boolean,
     onOuvrir: () -> Unit,
@@ -1060,7 +1060,7 @@ private fun LigneBalayable(
 
 @Composable
 private fun LigneArticle(
-    article: ArticleEntity,
+    article: ArticleLigne,
     source: String,
     withImage: Boolean,
     onOuvrir: () -> Unit,
@@ -1134,22 +1134,20 @@ private fun LigneArticle(
     }
 }
 
-/** Deux lignes d'aperçu, sans analyse HTML : le texte stocké suffit. */
-private fun extraitDe(article: ArticleEntity): String {
-    val brut = article.textContent
-        ?: article.contentHtml
-        ?: article.summaryHtml
-        ?: return ""
-    return brut
-        .replace(Regex("<[^>]+>"), " ")
+private val BALISES_HTML = Regex("<[^>]+>")
+private val ESPACES = Regex("\\s+")
+
+/** Deux lignes d'aperçu : l'extrait (400 caractères au plus) est nettoyé, pas le corps entier. */
+private fun extraitDe(article: ArticleLigne): String =
+    article.extrait
+        .replace(BALISES_HTML, " ")
         .replace('\u00a0', ' ')
-        .replace(Regex("\\s+"), " ")
+        .replace(ESPACES, " ")
         .trim()
-}
 
 @Composable
 private fun CarteArticle(
-    article: ArticleEntity,
+    article: ArticleLigne,
     source: String,
     grand: Boolean,
     withImage: Boolean,

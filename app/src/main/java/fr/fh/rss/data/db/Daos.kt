@@ -120,30 +120,57 @@ interface ArticleDao {
     @Query("DELETE FROM articles_fts WHERE rowid NOT IN (SELECT id FROM articles)")
     suspend fun pruneFts()
 
-    @Query("SELECT * FROM articles ORDER BY publishedAt DESC LIMIT :limit")
-    fun observeAll(limit: Int): Flow<List<ArticleEntity>>
+    /** Guid déjà en base pour un flux : évite d'analyser le HTML d'un article connu. */
+    @Query("SELECT guid FROM articles WHERE feedId = :feedId")
+    suspend fun guids(feedId: Long): List<String>
 
-    @Query("SELECT * FROM articles WHERE isRead = 0 ORDER BY publishedAt DESC LIMIT :limit")
-    fun observeUnread(limit: Int): Flow<List<ArticleEntity>>
-
-    @Query("SELECT * FROM articles WHERE isStarred = 1 ORDER BY publishedAt DESC LIMIT :limit")
-    fun observeStarred(limit: Int): Flow<List<ArticleEntity>>
-
-    @Query("SELECT * FROM articles WHERE feedId = :feedId ORDER BY publishedAt DESC LIMIT :limit")
-    fun observeByFeed(feedId: Long, limit: Int): Flow<List<ArticleEntity>>
+    // Les listes ne ramènent pas les corps : projection [ArticleLigne].
 
     @Query(
-        "SELECT a.* FROM articles a JOIN feeds f ON f.id = a.feedId " +
+        "SELECT id, feedId, title, url, author, publishedAt, imageUrl, isRead, isStarred, " +
+            "substr(COALESCE(textContent, summaryHtml, ''), 1, 400) AS extrait " +
+            "FROM articles ORDER BY publishedAt DESC LIMIT :limit",
+    )
+    fun observeAll(limit: Int): Flow<List<ArticleLigne>>
+
+    @Query(
+        "SELECT id, feedId, title, url, author, publishedAt, imageUrl, isRead, isStarred, " +
+            "substr(COALESCE(textContent, summaryHtml, ''), 1, 400) AS extrait " +
+            "FROM articles WHERE isRead = 0 ORDER BY publishedAt DESC LIMIT :limit",
+    )
+    fun observeUnread(limit: Int): Flow<List<ArticleLigne>>
+
+    @Query(
+        "SELECT id, feedId, title, url, author, publishedAt, imageUrl, isRead, isStarred, " +
+            "substr(COALESCE(textContent, summaryHtml, ''), 1, 400) AS extrait " +
+            "FROM articles WHERE isStarred = 1 ORDER BY publishedAt DESC LIMIT :limit",
+    )
+    fun observeStarred(limit: Int): Flow<List<ArticleLigne>>
+
+    @Query(
+        "SELECT id, feedId, title, url, author, publishedAt, imageUrl, isRead, isStarred, " +
+            "substr(COALESCE(textContent, summaryHtml, ''), 1, 400) AS extrait " +
+            "FROM articles WHERE feedId = :feedId ORDER BY publishedAt DESC LIMIT :limit",
+    )
+    fun observeByFeed(feedId: Long, limit: Int): Flow<List<ArticleLigne>>
+
+    @Query(
+        "SELECT a.id, a.feedId, a.title, a.url, a.author, a.publishedAt, a.imageUrl, " +
+            "a.isRead, a.isStarred, " +
+            "substr(COALESCE(a.textContent, a.summaryHtml, ''), 1, 400) AS extrait " +
+            "FROM articles a JOIN feeds f ON f.id = a.feedId " +
             "WHERE f.folderId = :folderId ORDER BY a.publishedAt DESC LIMIT :limit",
     )
-    fun observeByFolder(folderId: Long, limit: Int): Flow<List<ArticleEntity>>
+    fun observeByFolder(folderId: Long, limit: Int): Flow<List<ArticleLigne>>
 
     @Query(
-        "SELECT * FROM articles WHERE id IN " +
+        "SELECT id, feedId, title, url, author, publishedAt, imageUrl, isRead, isStarred, " +
+            "substr(COALESCE(textContent, summaryHtml, ''), 1, 400) AS extrait " +
+            "FROM articles WHERE id IN " +
             "(SELECT rowid FROM articles_fts WHERE articles_fts MATCH :query) " +
             "ORDER BY publishedAt DESC LIMIT :limit",
     )
-    fun observeSearch(query: String, limit: Int): Flow<List<ArticleEntity>>
+    fun observeSearch(query: String, limit: Int): Flow<List<ArticleLigne>>
 
     @Query("SELECT * FROM articles WHERE id = :id")
     fun observeById(id: Long): Flow<ArticleEntity?>
@@ -176,8 +203,8 @@ interface ArticleDao {
     suspend fun total(): Int
 
     /** Titres des derniers articles non lus : aperçu de la notification. */
-    @Query("SELECT * FROM articles WHERE isRead = 0 ORDER BY publishedAt DESC LIMIT :limite")
-    suspend fun derniersNonLus(limite: Int): List<ArticleEntity>
+    @Query("SELECT title FROM articles WHERE isRead = 0 ORDER BY publishedAt DESC LIMIT :limite")
+    suspend fun titresNonLus(limite: Int): List<String>
 
     /** Purge d'archive : conserve les [keep] plus récents, jamais les favoris. */
     @Query(

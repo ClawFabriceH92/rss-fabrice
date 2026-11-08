@@ -32,7 +32,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import fr.fh.rss.data.Reglages
 import fr.fh.rss.data.Regroupement
-import fr.fh.rss.data.db.ArticleEntity
+import fr.fh.rss.data.db.ArticleLigne
 
 /**
  * Onglet IA : ce qui demande un modèle de langage d'un côté, ce qui se calcule
@@ -44,7 +44,7 @@ import fr.fh.rss.data.db.ArticleEntity
  */
 @Composable
 fun EcranIa(
-    articles: List<ArticleEntity>,
+    articles: List<ArticleLigne>,
     titres: Map<Long, String>,
     reglages: Reglages,
     etatOllama: String?,
@@ -52,8 +52,8 @@ fun EcranIa(
     syntheseEnCours: Boolean,
     resumes: Map<Long, String>,
     resumeEnCours: Long?,
-    onOuvrir: (ArticleEntity) -> Unit,
-    onResumer: (ArticleEntity) -> Unit,
+    onOuvrir: (ArticleLigne) -> Unit,
+    onResumer: (ArticleLigne) -> Unit,
     onSynthese: () -> Unit,
     onEffacerSynthese: () -> Unit,
     onReglagesIa: () -> Unit,

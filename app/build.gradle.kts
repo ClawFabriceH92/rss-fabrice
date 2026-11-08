@@ -37,8 +37,8 @@ android {
         applicationId = "fr.fh.rss"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.8.0"
+        versionCode = 15
+        versionName = "1.9.0"
         resourceConfigurations += listOf("fr")
     }
 
@@ -80,6 +80,11 @@ android {
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
     }
+}
+
+// Export du schéma Room : sert à écrire et tester les migrations
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {

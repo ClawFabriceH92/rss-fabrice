@@ -117,6 +117,8 @@ le tiroir.
 - **Couleurs de lecture** : fond orange clair pour un article non lu, vert clair
   une fois lu (teintes adaptées au thème sombre), en liste comme en cartes.
 - **Bascule Tous / Non lus** en haut de la liste, avec le compteur de non lus.
+  Depuis la v1.11.0, l'application s'ouvre **sur les non lus** : la vue « Tous les
+  articles » reste à un appui, et lire un article le retire de la liste d'arrivée.
 
 ## Veille et confort de liste (v1.6.0)
 

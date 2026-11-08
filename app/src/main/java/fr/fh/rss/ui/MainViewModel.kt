@@ -39,6 +39,16 @@ import kotlinx.coroutines.withContext
 /** Ce que l'écran principal affiche. */
 data class Selection(val filtre: Filtre, val titre: String)
 
+/**
+ * Vue affichée à l'ouverture de l'application : les articles non lus. Un article
+ * lu sort donc de la liste, c'est le comportement attendu quand on trie son
+ * flux d'arrivée ; la vue « Tous les articles » reste à un appui dans le tiroir.
+ */
+val SELECTION_PAR_DEFAUT = Selection(Filtre.NonLus, "Non lus")
+
+/** Vues qui ne dépendent ni d'un dossier ni d'une source : rien à réinitialiser. */
+private val VUES_D_ENSEMBLE: Set<Filtre> = setOf(Filtre.Tous, Filtre.NonLus, Filtre.Favoris)
+
 /** Articles que « Tout marquer comme lu » vient de passer à lus : de quoi annuler. */
 data class AnnulationLecture(val ids: List<Long>)
 
@@ -97,7 +107,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
-    private val _selection = MutableStateFlow(Selection(Filtre.Tous, "Tous les articles"))
+    private val _selection = MutableStateFlow(SELECTION_PAR_DEFAUT)
     val selection: StateFlow<Selection> = _selection.asStateFlow()
 
     private val _recherche = MutableStateFlow("")
@@ -275,8 +285,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 is AddResult.Already -> "« ${resultat.title} » est déjà dans vos sources."
                 is AddResult.Failed -> "Ajout impossible : ${resultat.message}"
             }
-            if (_selection.value.filtre !is Filtre.Tous) {
-                _selection.value = Selection(Filtre.Tous, "Tous les articles")
+            if (_selection.value.filtre !in VUES_D_ENSEMBLE) {
+                _selection.value = SELECTION_PAR_DEFAUT
             }
         }
     }
@@ -296,7 +306,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             depot.deleteFolder(id)
             if ((_selection.value.filtre as? Filtre.Dossier)?.id == id) {
-                _selection.value = Selection(Filtre.Tous, "Tous les articles")
+                _selection.value = SELECTION_PAR_DEFAUT
             }
             _message.value = "Dossier supprimé (les sources sont conservées)."
         }
@@ -335,7 +345,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val favoris = nombreFavoris(listOf(feedId))
             depot.deleteFeed(feedId)
             if ((_selection.value.filtre as? Filtre.Flux)?.id == feedId) {
-                _selection.value = Selection(Filtre.Tous, "Tous les articles")
+                _selection.value = SELECTION_PAR_DEFAUT
             }
             _message.value = messageSuppression(1, favoris)
         }
@@ -353,7 +363,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val supprimees = runCatching { depot.deleteFeeds(feedIds) }.getOrDefault(0)
             val filtre = _selection.value.filtre
             if (filtre is Filtre.Flux && filtre.id in feedIds) {
-                _selection.value = Selection(Filtre.Tous, "Tous les articles")
+                _selection.value = SELECTION_PAR_DEFAUT
             }
             _message.value = messageSuppression(supprimees, favoris)
         }

@@ -14,6 +14,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import fr.fh.rss.ui.AppRoot
 import fr.fh.rss.ui.MainViewModel
 import fr.fh.rss.ui.theme.RssTheme
+import fr.fh.rss.update.UpdateManager
 import fr.fh.rss.work.Notifications
 
 class MainActivity : ComponentActivity() {
@@ -28,6 +29,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         lienEntrant.value = lienDepuisIntent(intent)
         Notifications.creerCanal(this)
+        // Contrôle de mise à jour au lancement (le plancher horaire reste géré par le manager).
+        UpdateManager.checkAtLaunch(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             !Notifications.permissionAccordee(this)
         ) {

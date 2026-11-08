@@ -208,6 +208,16 @@ fun AppRoot(
 
     LaunchedEffect(Unit) { vm.rafraichirAuLancement() }
 
+    // Vérification périodique de mise à jour pendant que l'application est ouverte.
+    // La boucle ne fait que réveiller le manager toutes les 30 minutes : c'est lui
+    // qui applique le plancher d'une heure entre deux vérifications automatiques.
+    LaunchedEffect(Unit) {
+        while (true) {
+            fr.fh.rss.update.UpdateManager.checkAtLaunch(contexte)
+            kotlinx.coroutines.delay(30 * 60_000L)
+        }
+    }
+
     // L'onglet IA indique si le serveur Ollama répond : on teste au lancement et
     // à chaque changement d'adresse.
     LaunchedEffect(reglages.ollamaUrl) { vm.verifierIa() }

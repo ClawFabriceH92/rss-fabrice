@@ -2,6 +2,12 @@ package fr.fh.rss.data
 
 import fr.fh.rss.data.db.ArticleRegroupable
 
+// Compilées une seule fois : normaliserTitre est appelée pour chaque article à
+// chaque émission de la liste, une Regex construite dans la fonction serait
+// recompilée des milliers de fois.
+private val ACCENTS_COMBINANTS = Regex("\\p{Mn}+")
+private val NON_ALPHANUMERIQUE = Regex("[^\\p{L}\\p{N}]+")
+
 /**
  * Regroupement des articles pour l'onglet IA : dépêches identiques publiées par
  * plusieurs sources, puis classement par thème.
@@ -30,7 +36,7 @@ object Regroupement {
     fun normaliserTitre(titre: String): String {
         val sansAccents = java.text.Normalizer
             .normalize(titre.replace('\u00a0', ' '), java.text.Normalizer.Form.NFD)
-            .replace(Regex("\\p{Mn}+"), "")
+            .replace(ACCENTS_COMBINANTS, "")
         var texte = MENTIONS_AGENCE.replace(sansAccents.lowercase(), " ").trim()
         // Les préfixes de type « DIRECT : » ou « Info : » peuvent s'empiler.
         while (true) {
@@ -38,7 +44,7 @@ object Regroupement {
             texte = PREFIXES.replace(texte, "").trim()
             if (texte == avant) break
         }
-        return texte.replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+        return texte.replace(NON_ALPHANUMERIQUE, " ").trim()
     }
 
     /**
@@ -112,9 +118,18 @@ object Regroupement {
     /** Une autre parution du même article, avec sa source. */
     data class AutreVersion(val articleId: Long, val source: String)
 
+    /**
+     * Adresse retenue comme clé d'identité : elle doit viser un article précis.
+     * Une adresse sans chemin ni paramètre (« site.com ») est celle de la page
+     * d'accueil : certains flux (podcast, agrégateur, pont de réseau social)
+     * donnent la même à tous leurs articles, elle ne prouve rien.
+     */
+    private fun cleUrlIdentifiante(url: String?): String? =
+        cleUrl(url)?.takeIf { it.contains('/') || it.contains('?') }
+
     /** Clés d'identité d'un article : adresse nettoyée et titre significatif. */
     private fun cles(article: ArticleRegroupable): List<String> = buildList {
-        cleUrl(article.url)?.let { add("url:$it") }
+        cleUrlIdentifiante(article.url)?.let { add("url:$it") }
         val titre = normaliserTitre(article.title)
         if (titre.length >= LONGUEUR_TITRE_CLE) add("titre:$titre")
     }
@@ -139,7 +154,9 @@ object Regroupement {
             val autres = mutableListOf<AutreVersion>()
             for (cle in cles(article)) {
                 for (meme in parCle[cle].orEmpty()) {
-                    if (meme.id == article.id || !vus.add(meme.id)) continue
+                    // Deux articles de la même source restent deux articles.
+                    if (meme.id == article.id || meme.feedId == article.feedId) continue
+                    if (!vus.add(meme.id)) continue
                     autres += AutreVersion(
                         articleId = meme.id,
                         source = titresSources[meme.feedId] ?: "source inconnue",
@@ -156,14 +173,17 @@ object Regroupement {
      * est triée du plus récent au plus ancien).
      *
      * Deux articles sont considérés identiques s'ils pointent vers la même
-     * adresse, ou s'ils portent le même titre significatif (assez long pour ne
-     * pas être un intitulé générique). Un article sans adresse ni titre
-     * exploitable est toujours conservé.
+     * adresse (précise : pas celle d'une page d'accueil), ou s'ils portent le
+     * même titre significatif (assez long pour ne pas être un intitulé
+     * générique), ET s'ils viennent de sources différentes : deux articles
+     * d'une même source au titre identique (rubrique hebdomadaire) sont deux
+     * articles. Un article sans clé exploitable est toujours conservé.
      */
     fun <T : ArticleRegroupable> dedoublonner(
         articles: List<T>,
     ): List<T> {
-        val vues = HashSet<String>()
+        // Pour chaque clé, les sources dont un article est déjà retenu.
+        val sourcesParCle = HashMap<String, MutableSet<Long>>()
         val gardes = ArrayList<T>(articles.size)
         for (article in articles) {
             val cles = cles(article)
@@ -171,12 +191,35 @@ object Regroupement {
                 gardes.add(article)
                 continue
             }
-            if (cles.any { it in vues }) continue
-            vues.addAll(cles)
+            val dejaVu = cles.any { cle ->
+                sourcesParCle[cle]?.any { it != article.feedId } == true
+            }
+            if (dejaVu) continue
+            for (cle in cles) sourcesParCle.getOrPut(cle) { HashSet() }.add(article.feedId)
             gardes.add(article)
         }
         return gardes
     }
+
+    /** Nombre d'articles que la liste afficherait pour ces articles (doublons masqués exclus). */
+    fun nombreAffiche(articles: List<ArticleRegroupable>): Int = dedoublonner(articles).size
+
+    /** Clé des articles dont la source n'est dans aucun dossier (comme dans les compteurs SQL). */
+    const val SANS_DOSSIER = -1L
+
+    /**
+     * Nombre d'articles affichés par dossier, doublons masqués exclus. Le
+     * dédoublonnage se fait à l'intérieur de chaque dossier : c'est la liste
+     * que l'on voit en l'ouvrant. [dossierDeSource] associe chaque source à son
+     * dossier (null : aucun) ; un article d'une source inconnue n'est compté nulle part.
+     */
+    fun nombreParDossier(
+        articles: List<ArticleRegroupable>,
+        dossierDeSource: Map<Long, Long?>,
+    ): Map<Long, Int> = articles
+        .filter { dossierDeSource.containsKey(it.feedId) }
+        .groupBy { dossierDeSource[it.feedId] ?: SANS_DOSSIER }
+        .mapValues { (_, liste) -> nombreAffiche(liste) }
 
     // ----------------------------------------------------------------- thèmes
 

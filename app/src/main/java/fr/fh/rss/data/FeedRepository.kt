@@ -38,9 +38,17 @@ class FeedRepository(
     private val transaction: suspend (suspend () -> Int) -> Int = { bloc -> bloc() },
     /** Extraction du texte d'un corps HTML ; injectable pour vérifier qu'elle est évitée. */
     private val texteDe: (String?) -> String = FeedParser::texteSimple,
+    /** Connectivité du téléphone (ConnectivityManager en production, toujours vraie en test). */
+    private val reseauDisponible: () -> Boolean = { true },
 ) {
 
-    data class ImportResult(val sources: Int, val dossiers: Int)
+    /** [lues] : sources que le fichier contenait (0 = fichier sans aucune source reconnue). */
+    data class ImportResult(val sources: Int, val dossiers: Int, val lues: Int = 0)
+
+    private companion object {
+        /** Plafond du texte conservé pour un article (aligné sur l'enregistrement). */
+        const val MAX_TEXTE = 200_000
+    }
 
     // ------------------------------------------------------------ ajouter
 
@@ -158,6 +166,14 @@ class FeedRepository(
         }
     }
 
+    /** Adresse à retenir après une redirection permanente, ou null si elle ne change pas. */
+    internal fun adresseApresRedirection(actuelle: String, reponse: Http.Reponse): String? {
+        if (!reponse.redirectionPermanente) return null
+        val finale = reponse.urlFinale?.trim() ?: return null
+        val http = finale.startsWith("http://") || finale.startsWith("https://")
+        return finale.takeIf { http && it != actuelle }
+    }
+
     /** Collecte d'une source. Renvoie le nombre de nouveaux articles. */
     suspend fun refreshFeed(feed: FeedEntity): Int = withContext(Dispatchers.IO) {
         val reponse = http.get(feed.url, feed.etag, feed.lastModified)
@@ -169,7 +185,16 @@ class FeedRepository(
             throw IOException("HTTP ${reponse.code}")
         }
         val corps = reponse.body ?: throw IOException("réponse vide")
+        // Une page HTML (connexion, site migré) répond 200 mais n'est pas un flux :
+        // sans ce garde-fou la collecte « réussirait » à vide, à jamais.
+        if (!FeedDiscovery.looksLikeFeed(corps)) {
+            throw IOException("ce n'est plus un flux (la page répond du HTML)")
+        }
         val flux = FeedParser.parse(feed.url, corps)
+        // Redirection permanente : on retient la nouvelle adresse pour les prochaines collectes.
+        adresseApresRedirection(feed.url, reponse)?.let { nouvelle ->
+            if (feedDao.byUrl(nouvelle) == null) feedDao.updateUrl(feed.id, nouvelle)
+        }
 
         var nouveaux = 0
         if (flux.items.isNotEmpty()) {
@@ -190,23 +215,37 @@ class FeedRepository(
     /**
      * Collecte de toutes les sources, avec parallélisme limité.
      *
+     * Sans réseau, la collecte s'arrête avant de toucher aux sources : hors
+     * connexion, ce n'est pas la faute des sources. Si toutes les sources
+     * échouent ensemble sur une erreur purement réseau (panne locale qui
+     * échappe au test de connectivité), aucune n'est marquée en échec non plus.
+     *
+     * [ignorerRepos] sert à l'actualisation demandée par l'utilisateur : elle
+     * réinterroge aussi les sources au repos, comme [refreshById].
+     *
      * [onProgres] est appelé après chaque source traitée : l'écran s'en sert
      * pour afficher une progression chiffrée (« Collecte 8/45 »), qui reste
      * lisible même quand les animations système sont désactivées.
      */
     suspend fun refreshAll(
         paralleles: Int = 4,
+        ignorerRepos: Boolean = false,
         onProgres: (faits: Int, total: Int) -> Unit = { _, _ -> },
     ): RefreshSummary = coroutineScope {
+        if (!reseauDisponible()) {
+            return@coroutineScope RefreshSummary(horsConnexion = true)
+        }
         val sources = feedDao.all()
         if (sources.isEmpty()) return@coroutineScope RefreshSummary()
 
         // Une source qui vient d'échouer plusieurs fois de suite est laissée au
-        // repos : inutile de la réinterroger à chaque passage. Un essai manuel
-        // depuis l'écran des sources en échec ignore ce repos.
+        // repos : inutile de la réinterroger à chaque passage. Une actualisation
+        // demandée par l'utilisateur ignore ce repos.
         val maintenant = System.currentTimeMillis()
-        val auRepos = sources.filter {
-            EtatSource.doitAttendre(it.errorCount, it.lastFetchAt, maintenant)
+        val auRepos = if (ignorerRepos) {
+            emptyList()
+        } else {
+            sources.filter { EtatSource.doitAttendre(it.errorCount, it.lastFetchAt, maintenant) }
         }
         val aCollecter = sources.filterNot { it in auRepos }
         if (aCollecter.isEmpty()) {
@@ -216,7 +255,7 @@ class FeedRepository(
         val permis = Semaphore(paralleles.coerceAtLeast(1))
         val total = java.util.concurrent.atomic.AtomicInteger(0)
         val faits = java.util.concurrent.atomic.AtomicInteger(0)
-        val echecs = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+        val echecs = java.util.Collections.synchronizedList(mutableListOf<Pair<FeedEntity, Throwable>>())
 
         // Premier point de mesure avant tout travail : l'écran affiche
         // « 0/N » plutôt qu'un indicateur muet.
@@ -229,11 +268,7 @@ class FeedRepository(
                         runCatching { refreshFeed(feed) }
                             .fold(
                                 onSuccess = { total.addAndGet(it) },
-                                onFailure = { erreur ->
-                                    val detail = erreur.message ?: erreur.javaClass.simpleName
-                                    feedDao.marquerEchec(feed.id, System.currentTimeMillis(), detail)
-                                    echecs.add(feed.title to detail)
-                                },
+                                onFailure = { erreur -> echecs.add(feed to erreur) },
                             )
                     }
                 } finally {
@@ -242,8 +277,26 @@ class FeedRepository(
             }
         }
         resultats.awaitAll()
+
+        // Le verdict tombe une fois toutes les sources passées : seul le recul
+        // permet de distinguer une panne locale d'une panne de source.
+        val liste = echecs.toList()
+        if (EtatSource.estPanneLocale(liste.map { it.second }, aCollecter.size)) {
+            return@coroutineScope RefreshSummary(
+                sources = sources.size,
+                enPause = auRepos.size,
+                horsConnexion = true,
+            )
+        }
+        val details = liste.map { (feed, erreur) ->
+            val detail = erreur.message ?: erreur.javaClass.simpleName
+            feedDao.marquerEchec(feed.id, System.currentTimeMillis(), detail)
+            feed.title to detail
+        }
+        // Les favoris restent lisibles hors connexion : on complète leur texte.
+        runCatching { completerFavoris() }
         trimArchive()
-        RefreshSummary(sources.size, total.get(), echecs.toList(), auRepos.size)
+        RefreshSummary(sources.size, total.get(), details, auRepos.size)
     }
 
     suspend fun refreshById(feedId: Long): Int {
@@ -312,7 +365,7 @@ class FeedRepository(
             )
             if (id > 0) sources++
         }
-        ImportResult(sources, dossiers)
+        ImportResult(sources, dossiers, entrees.size)
     }
 
     suspend fun exportOpml(): String = withContext(Dispatchers.IO) {
@@ -341,23 +394,89 @@ class FeedRepository(
     /** Article complet (corps compris), pour le lecteur et les résumés IA. */
     suspend fun article(id: Long): ArticleEntity? = articleDao.byId(id)
 
-    /** Télécharge le texte complet d'un article (mode lecture hors connexion). */
+    /** Articles dont le téléchargement du texte complet est en cours : évite le doublon ouverture + favori. */
+    private val textesEnCours = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+
+    /**
+     * Télécharge le texte complet d'un article (mode lecture hors connexion).
+     * Renvoie vrai si l'article dispose d'un texte complet, faux sinon.
+     *
+     * - Sans réseau, rien n'est tenté et rien n'est mémorisé : ce n'est pas
+     *   l'article qui est en cause.
+     * - Le texte existant n'est remplacé que par un texte nettement plus long
+     *   (voir [TexteComplet.issue]).
+     * - Chaque tentative est mémorisée : un échec n'est retenté qu'après
+     *   [TexteComplet.DELAI_NOUVEL_ESSAI_MS], et le lecteur peut l'afficher.
+     * - L'index plein texte suit le nouveau texte, sinon il resterait introuvable.
+     */
     suspend fun fetchFullContent(articleId: Long): Boolean = withContext(Dispatchers.IO) {
         val article = articleDao.byId(articleId) ?: return@withContext false
         val url = article.url ?: return@withContext false
         val actuel = article.textContent.orEmpty()
-        if (actuel.length > 1200) return@withContext true
-
-        val page = runCatching { http.get(url) }.getOrNull()?.takeIf { it.ok }?.body
-            ?: return@withContext false
-        val extrait = ReaderExtractor.extract(page, url) ?: return@withContext false
-        articleDao.setContent(articleId, extrait.html, extrait.texte.take(200_000))
-        true
+        val maintenant = System.currentTimeMillis()
+        if (actuel.length > TexteComplet.LONGUEUR_SUFFISANTE) return@withContext true
+        if (!TexteComplet.doitTenter(actuel.length, article.texteCompletEssaiLe, article.texteCompletEchec, maintenant)) {
+            return@withContext !article.texteCompletEchec
+        }
+        if (!reseauDisponible()) return@withContext false
+        if (!textesEnCours.add(articleId)) return@withContext false
+        try {
+            val page = runCatching { http.getPage(url) }.getOrNull()?.takeIf { it.ok }?.body
+            val extrait = page?.let { ReaderExtractor.extract(it, url) }
+            val texte = extrait?.texte?.take(MAX_TEXTE).orEmpty()
+            val issue = if (extrait == null) TexteComplet.Issue.ECHEC else TexteComplet.issue(actuel.length, texte.length)
+            when (issue) {
+                TexteComplet.Issue.REMPLACER -> {
+                    transaction {
+                        articleDao.setContent(articleId, extrait?.html, texte, maintenant)
+                        articleDao.deleteFts(articleId)
+                        articleDao.insertFts(ArticleFts(rowId = articleId, title = article.title, body = texte))
+                        0
+                    }
+                    true
+                }
+                TexteComplet.Issue.CONSERVER -> {
+                    articleDao.marquerEssaiTexteComplet(articleId, maintenant, false)
+                    true
+                }
+                TexteComplet.Issue.ECHEC -> {
+                    articleDao.marquerEssaiTexteComplet(articleId, maintenant, true)
+                    false
+                }
+            }
+        } finally {
+            textesEnCours.remove(articleId)
+        }
     }
 
-    /** Titres des derniers articles non lus, pour l'aperçu de la notification. */
-    suspend fun derniersTitresNonLus(limite: Int = 3): List<String> =
-        runCatching { articleDao.titresNonLus(limite) }.getOrDefault(emptyList())
+    /**
+     * Complète les favoris dont le texte est court, pour qu'ils restent
+     * lisibles hors connexion. Au plus [TexteComplet.FAVORIS_PAR_COLLECTE] par
+     * passage, les plus récents d'abord ; un échec récent n'est pas retenté.
+     */
+    suspend fun completerFavoris(paralleles: Int = 2): Int = withContext(Dispatchers.IO) {
+        if (!reseauDisponible()) return@withContext 0
+        val ids = runCatching {
+            articleDao.favorisACompleter(
+                seuil = TexteComplet.LONGUEUR_SUFFISANTE,
+                avant = System.currentTimeMillis() - TexteComplet.DELAI_NOUVEL_ESSAI_MS,
+                limite = TexteComplet.FAVORIS_PAR_COLLECTE,
+            )
+        }.getOrDefault(emptyList())
+        if (ids.isEmpty()) return@withContext 0
+        val permis = Semaphore(paralleles.coerceAtLeast(1))
+        ids.map { id ->
+            async { permis.withPermit { runCatching { fetchFullContent(id) }.getOrDefault(false) } }
+        }.awaitAll().count { it }
+    }
+
+    /** Nombre d'articles non lus reçus depuis [depuis] (millisecondes), pour la notification. */
+    suspend fun nombreNonLusDepuis(depuis: Long): Int =
+        runCatching { articleDao.compterNonLusDepuis(depuis) }.getOrDefault(0)
+
+    /** Titres de ces articles (les derniers reçus d'abord), pour l'aperçu de la notification. */
+    suspend fun titresNonLusDepuis(depuis: Long, limite: Int = 3): List<String> =
+        runCatching { articleDao.titresNonLusDepuis(depuis, limite) }.getOrDefault(emptyList())
 
     suspend fun trimArchive() {
         val limite = archiveMax()
@@ -367,12 +486,33 @@ class FeedRepository(
         }
     }
 
+    /**
+     * Retire une source et ses articles, sauf les favoris : ils sont ce que
+     * l'utilisateur a choisi de garder (« Lire plus tard ») et restent
+     * lisibles, rattachés à une source disparue.
+     */
     suspend fun deleteFeed(feedId: Long) {
-        articleDao.clearFeed(feedId)
-        feedDao.deleteArticles(feedId)
-        feedDao.delete(feedId)
+        retirerSource(feedId)
         articleDao.pruneFts()
     }
+
+    /** Retire la source et ses articles non favoris, sans toucher à l'index plein texte. */
+    private suspend fun retirerSource(feedId: Long) {
+        feedDao.deleteArticles(feedId)
+        feedDao.delete(feedId)
+    }
+
+    /** Favoris qui survivraient à la suppression de ces sources (pour la confirmation). */
+    suspend fun nombreFavoris(feedIds: Collection<Long>): Int =
+        feedIds.distinct().sumOf { articleDao.nombreFavoris(it) }
+
+    /** Ce que ferait la limite d'archive [limite] : sert à avertir avant de réduire. */
+    suspend fun apercuArchive(limite: Int): ApercuArchive = ApercuArchive(
+        limite = limite,
+        total = articleDao.total(),
+        aSupprimer = articleDao.compterPurge(limite),
+        dontNonLus = articleDao.compterPurgeNonLus(limite),
+    )
 
     /**
      * Supprime plusieurs sources d'un coup (bouton « Tout supprimer » de l'écran
@@ -381,8 +521,11 @@ class FeedRepository(
     suspend fun deleteFeeds(feedIds: Collection<Long>): Int {
         var supprimees = 0
         for (id in feedIds.distinct()) {
-            runCatching { deleteFeed(id) }.onSuccess { supprimees++ }
+            runCatching { retirerSource(id) }.onSuccess { supprimees++ }
         }
+        // Une seule purge de l'index (NOT IN sur toute la table) pour tout le lot,
+        // au lieu d'une par source.
+        if (feedIds.isNotEmpty()) runCatching { articleDao.pruneFts() }
         return supprimees
     }
 
@@ -408,13 +551,40 @@ class FeedRepository(
 
     suspend fun markAllRead() = articleDao.markAllRead()
 
+    /**
+     * Marque comme lus les articles non lus de la sélection [filtre] et renvoie
+     * leurs identifiants, pour que l'utilisateur puisse annuler.
+     */
+    suspend fun marquerSelectionLue(filtre: Filtre): List<Long> {
+        val ids = when (filtre) {
+            Filtre.Tous, Filtre.NonLus -> articleDao.idsNonLus()
+            Filtre.Favoris -> articleDao.idsNonLusFavoris()
+            is Filtre.Flux -> articleDao.idsNonLusDeLaSource(filtre.id)
+            is Filtre.Dossier -> articleDao.idsNonLusDuDossier(filtre.id)
+        }
+        changerLu(ids, true)
+        return ids
+    }
+
+    /** Remet ces articles à « non lu » (annulation d'un marquage en masse). */
+    suspend fun annulerMarquageLu(ids: List<Long>) = changerLu(ids, false)
+
+    /** Par paquets : SQLite limite le nombre de paramètres d'une requête. */
+    private suspend fun changerLu(ids: List<Long>, lu: Boolean) {
+        for (paquet in ids.chunked(500)) articleDao.setReadPourIds(paquet, lu)
+    }
+
     suspend fun setRead(id: Long, lu: Boolean) = articleDao.setRead(id, lu)
+
+    /** Change l'état lu d'un article et de ses doublons masqués (autres sources), par paquets. */
+    suspend fun setReadGroupe(ids: Collection<Long>, lu: Boolean) = changerLu(ids.distinct(), lu)
 
     suspend fun setStarred(id: Long, favori: Boolean) = articleDao.setStarred(id, favori)
 
     /**
-     * Requête FTS : chaque mot est mis entre guillemets pour éviter qu'un
-     * caractère spécial (`*`, `-`, `:`) ne casse l'analyseur SQLite.
+     * Requête FTS : chaque mot est entre guillemets pour éviter qu'un caractère
+     * spécial (`*`, `-`, `:`) ne casse l'analyseur SQLite, et le dernier mot
+     * est un préfixe (voir [Fts.query]).
      */
     fun ftsQuery(saisie: String): String = Fts.query(saisie)
 
@@ -429,6 +599,8 @@ class FeedRepository(
     fun observeUnreadByFolder() = feedDao.observeUnreadByFolder()
 
     fun observeUnreadTotal() = articleDao.observeUnreadTotal()
+
+    fun observeNonLusCles() = articleDao.observeNonLusCles()
 
     fun observeArticle(id: Long) = articleDao.observeById(id)
 

@@ -43,9 +43,13 @@ object FeedDiscovery {
 
     /** Vrai si le corps ressemble à un flux (et non à une page HTML). */
     fun looksLikeFeed(body: String): Boolean {
-        val debut = body.trimStart().take(400).lowercase()
+        val debut = body.trimStart().take(1200).lowercase()
         if (debut.startsWith("{")) return debut.contains("\"items\"") || debut.contains("\"version\"")
-        return debut.contains("<rss") || debut.contains("<feed") || debut.contains("<rdf")
+        val marqueurs = listOf("<rss", "<feed", "<rdf").map { debut.indexOf(it) }.filter { it >= 0 }
+        val flux = marqueurs.minOrNull() ?: return false
+        // Une page HTML qui cite un flux plus loin (lien, exemple) reste une page.
+        val page = listOf("<!doctype html", "<html").map { debut.indexOf(it) }.filter { it >= 0 }.minOrNull()
+        return page == null || flux < page
     }
 
     fun normalizeUrl(saisie: String): String {

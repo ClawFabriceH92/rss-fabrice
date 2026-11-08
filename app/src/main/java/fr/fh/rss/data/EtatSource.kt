@@ -43,6 +43,42 @@ object EtatSource {
         return ((restant + HEURE_MS / 60 - 1) / (HEURE_MS / 60)).toInt()
     }
 
+    /** Nombre minimal de sources en échec ensemble pour parler de panne locale. */
+    const val SEUIL_PANNE_LOCALE = 2
+
+    /**
+     * Vrai pour une erreur purement réseau : le téléphone n'a pas de connexion
+     * (ou pas de DNS), ce qui ne dit rien de l'état de la source. On remonte
+     * la chaîne des causes, car certaines couches enveloppent l'exception.
+     */
+    fun estErreurReseau(erreur: Throwable): Boolean {
+        var courante: Throwable? = erreur
+        var profondeur = 0
+        while (courante != null && profondeur < 6) {
+            if (courante is java.net.UnknownHostException ||
+                courante is java.net.ConnectException ||
+                courante is java.net.SocketTimeoutException
+            ) {
+                return true
+            }
+            courante = courante.cause?.takeIf { it !== courante }
+            profondeur++
+        }
+        return false
+    }
+
+    /**
+     * Panne locale : toutes les sources collectées ont échoué, et toutes sur
+     * une erreur purement réseau. Il faut au moins [SEUIL_PANNE_LOCALE] sources
+     * pour conclure ; avec une seule, un délai dépassé reste compté comme un
+     * échec de la source (une absence franche de réseau est déjà écartée par
+     * le test de connectivité en amont).
+     */
+    fun estPanneLocale(erreurs: List<Throwable>, collectees: Int): Boolean =
+        collectees >= SEUIL_PANNE_LOCALE &&
+            erreurs.size == collectees &&
+            erreurs.all { estErreurReseau(it) }
+
     private const val JOUR_MS = 24L * 60L * 60L * 1000L
 
     /** Jours pleins écoulés depuis le premier échec de la série en cours. */

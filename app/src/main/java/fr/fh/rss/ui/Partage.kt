@@ -3,6 +3,7 @@ package fr.fh.rss.ui
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
+import fr.fh.rss.data.ExportsOpml
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -13,8 +14,10 @@ fun partagerOpml(contexte: Context, xml: String) {
     runCatching {
         val dossier = File(contexte.filesDir, "exports").apply { mkdirs() }
         val horodatage = SimpleDateFormat("yyyyMMdd-HHmm", Locale.FRANCE).format(Date())
-        val fichier = File(dossier, "sources-rss-$horodatage.opml")
+        val fichier = File(dossier, ExportsOpml.nomFichier(horodatage))
         fichier.writeText(xml, Charsets.UTF_8)
+        // Les anciens exports ne servent plus : ne garder que les plus récents.
+        ExportsOpml.purger(dossier)
 
         val uri = FileProvider.getUriForFile(contexte, "${contexte.packageName}.fileprovider", fichier)
         val envoi = Intent(Intent.ACTION_SEND).apply {

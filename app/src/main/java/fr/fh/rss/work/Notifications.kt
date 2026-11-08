@@ -12,15 +12,14 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import fr.fh.rss.MainActivity
 import fr.fh.rss.R
-import fr.fh.rss.data.Reglages
 import java.util.Calendar
 
 /**
  * Notification des nouveaux articles après une collecte.
  *
- * Une seule notification, remplacée à chaque collecte : pas d'empilement. Le
- * seuil est d'un article, le silence de nuit (22 h - 7 h) et la permission
- * Android 13 sont respectés.
+ * Une seule notification, remplacée à chaque collecte : pas d'empilement. La
+ * décision (seuil, silence de nuit 22 h - 7 h, report) vient de
+ * [ReportNotification] ; la permission Android 13 est revérifiée ici.
  */
 object Notifications {
 
@@ -49,24 +48,28 @@ object Notifications {
             true
         }
 
-    /** Silence de nuit : 22 h → 7 h. */
-    fun heureSilencieuse(heure: Int): Boolean = heure >= 22 || heure < 7
+    /** Heure courante (0 à 23), pour [ReportNotification.decider]. */
+    fun heureActuelle(): Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+
+    /** Retire la notification : l'utilisateur ouvre l'application, il voit les articles. */
+    fun annuler(context: Context) {
+        runCatching { NotificationManagerCompat.from(context).cancel(ID) }
+    }
 
     /**
-     * Publie (ou remplace) la notification de collecte.
+     * Publie (ou remplace) la notification de collecte. Le seuil, le silence de
+     * nuit et la permission sont décidés avant, par [ReportNotification.decider].
      *
-     * @param titres titres des articles rapportés, du plus récent au plus ancien.
+     * @param nombre articles non lus reçus depuis la dernière notification.
+     * @param titres titres de ces articles, du plus récent au plus ancien.
+     * @return vrai si la notification est partie.
      */
     fun notifierNouveaux(
         context: Context,
-        reglages: Reglages,
         nombre: Int,
         titres: List<String>,
-        heure: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
-    ) {
-        if (!reglages.notifierNouveaux || nombre <= 0) return
-        if (reglages.silenceNuit && heureSilencieuse(heure)) return
-        if (!permissionAccordee(context)) return
+    ): Boolean {
+        if (nombre <= 0 || !permissionAccordee(context)) return false
 
         creerCanal(context)
         val ouverture = PendingIntent.getActivity(
@@ -88,6 +91,6 @@ object Notifications {
             .setContentIntent(ouverture)
             .setOnlyAlertOnce(true)
             .build()
-        runCatching { NotificationManagerCompat.from(context).notify(ID, notification) }
+        return runCatching { NotificationManagerCompat.from(context).notify(ID, notification) }.isSuccess
     }
 }

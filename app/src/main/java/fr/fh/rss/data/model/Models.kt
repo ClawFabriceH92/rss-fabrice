@@ -42,4 +42,10 @@ data class RefreshSummary(
     val echecs: List<Pair<String, String>> = emptyList(),
     /** Sources laissées au repos après plusieurs échecs consécutifs. */
     val enPause: Int = 0,
+    /**
+     * Vrai quand la collecte n'a pas eu lieu faute de réseau (ou que toutes
+     * les sources ont échoué sur une panne purement réseau). Aucune source
+     * n'a alors été marquée en échec.
+     */
+    val horsConnexion: Boolean = false,
 )

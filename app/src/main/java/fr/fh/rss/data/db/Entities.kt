@@ -3,6 +3,7 @@ package fr.fh.rss.data.db
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Fts4
+import androidx.room.FtsOptions
 import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -62,6 +63,13 @@ data class ArticleEntity(
     val isRead: Boolean = false,
     val isStarred: Boolean = false,
     val dedupHash: String = "",
+    /** Dernier essai de téléchargement du texte complet (null : jamais tenté). */
+    val texteCompletEssaiLe: Long? = null,
+    /**
+     * Vrai quand le dernier essai n'a pas donné un texte exploitable : le
+     * lecteur le signale, et l'essai n'est pas relancé à chaque ouverture.
+     */
+    val texteCompletEchec: Boolean = false,
 ) : ArticleRegroupable {
     @get:Ignore
     override val texteApercu: String get() = textContent.orEmpty().take(600)
@@ -76,6 +84,19 @@ interface ArticleRegroupable {
 
     /** Début du texte, assez long pour deviner le thème. */
     val texteApercu: String
+}
+
+/**
+ * Strict nécessaire pour compter ce qui est réellement affiché : les non lus,
+ * dédoublonnés comme la liste, sans charger aucun corps ni extrait.
+ */
+data class ArticleCle(
+    override val id: Long,
+    override val feedId: Long,
+    override val title: String,
+    override val url: String?,
+) : ArticleRegroupable {
+    override val texteApercu: String get() = ""
 }
 
 /**
@@ -103,8 +124,12 @@ data class ArticleLigne(
 /**
  * Index plein texte. Alimenté et nettoyé par le dépôt : l'identifiant de
  * l'article est la clé `rowid` de la table FTS.
+ *
+ * Tokenizer unicode61 (diacritiques repliés, majuscules accentuées comprises) :
+ * « economie » trouve « Économie ». Le tokenizer par défaut ne replie que
+ * l'ASCII. Le changement impose [AppDatabase.MIGRATION_2_3].
  */
-@Fts4
+@Fts4(tokenizer = FtsOptions.TOKENIZER_UNICODE61)
 @Entity(tableName = "articles_fts")
 data class ArticleFts(
     @PrimaryKey @ColumnInfo(name = "rowid") val rowId: Long,

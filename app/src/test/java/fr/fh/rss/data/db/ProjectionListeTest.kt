@@ -42,8 +42,8 @@ class ProjectionListeTest {
         val source = File("src/main/java/fr/fh/rss/data/db/Daos.kt")
             .takeIf { it.exists() }?.readText()
             ?: File("app/src/main/java/fr/fh/rss/data/db/Daos.kt").readText()
-        assertTrue(source.contains("SELECT title FROM articles WHERE isRead = 0"))
-        assertTrue(source.contains("suspend fun titresNonLus(limite: Int): List<String>"))
+        assertTrue(source.contains("SELECT title FROM articles WHERE isRead = 0 AND fetchedAt > :depuis"))
+        assertTrue(source.contains("suspend fun titresNonLusDepuis(depuis: Long, limite: Int): List<String>"))
         assertTrue(ArticleDao::class.java.methods.none { it.name == "derniersNonLus" })
     }
 

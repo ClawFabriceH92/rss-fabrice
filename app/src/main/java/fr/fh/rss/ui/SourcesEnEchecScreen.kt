@@ -9,7 +9,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -17,10 +16,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,11 +36,14 @@ fun EcranSourcesEnEchec(
     sources: List<FeedEntity>,
     onReessayer: (Long) -> Unit,
     onReessayerTout: (List<Long>) -> Unit,
+    /**
+     * Demandes de suppression : l'écran principal affiche la confirmation, avec
+     * le nombre de favoris conservés. Rien n'est supprimé directement d'ici.
+     */
     onSupprimer: (Long) -> Unit,
     onSupprimerTout: (List<Long>) -> Unit = {},
 ) {
     val maintenant = remember(sources) { System.currentTimeMillis() }
-    var confirmationSuppression by remember { mutableStateOf(false) }
 
     LazyColumn(Modifier.fillMaxWidth()) {
         item(key = "entete") {
@@ -76,7 +75,7 @@ fun EcranSourcesEnEchec(
                             Text("Tout réessayer")
                         }
                         OutlinedButton(
-                            onClick = { confirmationSuppression = true },
+                            onClick = { onSupprimerTout(sources.map { it.id }) },
                             colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
                                 contentColor = MaterialTheme.colorScheme.error,
                             ),
@@ -139,32 +138,5 @@ fun EcranSourcesEnEchec(
                 HorizontalDivider(Modifier.padding(top = 4.dp))
             }
         }
-    }
-
-    if (confirmationSuppression) {
-        AlertDialog(
-            onDismissRequest = { confirmationSuppression = false },
-            title = { Text("Tout supprimer ?") },
-            text = {
-                Text(
-                    "${sources.size} source(s) en échec et leurs articles déjà " +
-                        "téléchargés seront retirés de l'application. Les sites des " +
-                        "flux ne sont pas modifiés. Cette action est définitive.",
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmationSuppression = false
-                        onSupprimerTout(sources.map { it.id })
-                    },
-                ) {
-                    Text("Tout supprimer", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmationSuppression = false }) { Text("Annuler") }
-            },
-        )
     }
 }

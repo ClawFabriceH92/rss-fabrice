@@ -25,18 +25,42 @@ class RefreshWorker(
     override suspend fun doWork(): Result {
         val app = applicationContext as? RssApp ?: return Result.success()
         return runCatching {
-            val bilan = app.container.repository.refreshAll()
-            // C'est ici que la veille se voit : la collecte de fond prévient
-            // quand elle rapporte du neuf (seuil, silence de nuit et
-            // permission Android 13 sont gérés par Notifications).
-            if (bilan.nouveaux > 0) {
-                val reglages = app.container.settings.flow.first()
-                Notifications.notifierNouveaux(
+            val depot = app.container.repository
+            val parametres = app.container.settings
+
+            // Repère : date de la dernière notification. Au tout premier passage on le
+            // pose juste avant la collecte, pour ne pas annoncer tout l'existant.
+            var repere = parametres.derniereNotifAt()
+            if (repere <= 0L) {
+                repere = System.currentTimeMillis() - 1
+                parametres.setDerniereNotifAt(repere)
+            }
+
+            depot.refreshAll()
+
+            // C'est ici que la veille se voit : on compte ce qui est arrivé depuis le
+            // repère (et non seulement cette collecte), donc la nuit ne perd rien.
+            val reglages = parametres.flow.first()
+            val enAttente = depot.nombreNonLusDepuis(repere)
+            val decision = ReportNotification.decider(
+                notifierActif = reglages.notifierNouveaux,
+                silenceNuit = reglages.silenceNuit,
+                heure = Notifications.heureActuelle(),
+                permissionAccordee = Notifications.permissionAccordee(applicationContext),
+                enAttente = enAttente,
+            )
+            var publiee = decision != ReportNotification.Decision.NOTIFIER
+            if (decision == ReportNotification.Decision.NOTIFIER) {
+                publiee = Notifications.notifierNouveaux(
                     context = applicationContext,
-                    reglages = reglages,
-                    nombre = bilan.nouveaux,
-                    titres = app.container.repository.derniersTitresNonLus(3),
+                    nombre = enAttente,
+                    titres = depot.titresNonLusDepuis(repere, 3),
                 )
+            }
+            // Si la publication a échoué, le repère reste : le passage suivant réessaiera.
+            if (publiee) {
+                val nouveau = ReportNotification.nouveauRepere(decision, repere, System.currentTimeMillis())
+                if (nouveau != repere) parametres.setDerniereNotifAt(nouveau)
             }
             Result.success()
         }.getOrElse { Result.retry() }

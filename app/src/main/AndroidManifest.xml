@@ -9,6 +9,8 @@
     <application
         android:name=".RssApp"
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -34,13 +36,51 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
 
-            <!-- Ouverture d'un flux ou d'une page depuis un autre navigateur -->
+            <!--
+                Ouverture d'un flux depuis un navigateur ou une autre application. L'application ne se
+                propose PAS pour n'importe quel lien web : trois cas explicites seulement.
+                Un lien de page web ordinaire reste à son navigateur ; pour s'abonner à un
+                site, le partager vers l'application (filtre SEND ci-dessus).
+            -->
+
+            <!-- 1. Réponse typée flux ou OPML (type MIME annoncé par le serveur) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="http" />
                 <data android:scheme="https" />
+                <data android:mimeType="application/rss+xml" />
+                <data android:mimeType="application/atom+xml" />
+                <data android:mimeType="application/rdf+xml" />
+                <data android:mimeType="text/x-opml" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="text/xml" />
+            </intent-filter>
+
+            <!-- 2. Adresse qui se termine par .rss, .atom ou .xml (le navigateur n'envoie pas de type) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.rss" />
+                <data android:pathPattern=".*\\..*\\.rss" />
+                <data android:pathPattern=".*\\.atom" />
+                <data android:pathPattern=".*\\..*\\.atom" />
+                <data android:pathPattern=".*\\.xml" />
+                <data android:pathPattern=".*\\..*\\.xml" />
+            </intent-filter>
+
+            <!-- 3. Schémas dédiés aux flux : feed://exemple.fr/rss -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="feed" />
+                <data android:scheme="rss" />
             </intent-filter>
         </activity>
 

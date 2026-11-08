@@ -6,9 +6,11 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "reglages")
@@ -27,6 +29,8 @@ data class Reglages(
     val notifierNouveaux: Boolean = true,
     /** Silence des notifications entre 22 h et 7 h. */
     val silenceNuit: Boolean = true,
+    /** Taille du texte du lecteur en pour cent (A- / A+), voir [TailleTexte]. */
+    val tailleTexte: Int = TailleTexte.DEFAUT,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -42,6 +46,8 @@ class SettingsRepository(private val context: Context) {
         val ollamaModele = stringPreferencesKey("ollama_modele")
         val notifier = booleanPreferencesKey("notifier_nouveaux")
         val silence = booleanPreferencesKey("silence_nuit")
+        val derniereNotif = longPreferencesKey("derniere_notif_at")
+        val tailleTexte = intPreferencesKey("taille_texte_lecteur")
     }
 
     val flow: Flow<Reglages> = context.dataStore.data.map { p ->
@@ -56,11 +62,21 @@ class SettingsRepository(private val context: Context) {
             ollamaModele = p[Cles.ollamaModele] ?: fr.fh.rss.data.net.Ollama.MODELE_DEFAUT,
             notifierNouveaux = p[Cles.notifier] ?: true,
             silenceNuit = p[Cles.silence] ?: true,
+            tailleTexte = TailleTexte.normaliser(p[Cles.tailleTexte] ?: TailleTexte.DEFAUT),
         )
     }
 
+    /**
+     * Date de la dernière notification (ou du dernier passage de l'utilisateur
+     * dans l'application). Hors base : aucune migration Room. 0 = jamais posée.
+     */
+    suspend fun derniereNotifAt(): Long = context.dataStore.data.first()[Cles.derniereNotif] ?: 0L
+
+    suspend fun setDerniereNotifAt(valeur: Long) =
+        context.dataStore.edit { it[Cles.derniereNotif] = valeur }
+
     suspend fun setOllamaUrl(valeur: String) =
-        context.dataStore.edit { it[Cles.ollamaUrl] = valeur.trim().ifEmpty { fr.fh.rss.data.net.Ollama.ADRESSE_DEFAUT } }
+        context.dataStore.edit { it[Cles.ollamaUrl] = fr.fh.rss.data.net.Ollama.normaliser(valeur) }
 
     suspend fun setOllamaModele(valeur: String) =
         context.dataStore.edit { it[Cles.ollamaModele] = valeur.trim() }
@@ -85,4 +101,7 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setSilenceNuit(actif: Boolean) =
         context.dataStore.edit { it[Cles.silence] = actif }
+
+    suspend fun setTailleTexte(pourcent: Int) =
+        context.dataStore.edit { it[Cles.tailleTexte] = TailleTexte.normaliser(pourcent) }
 }

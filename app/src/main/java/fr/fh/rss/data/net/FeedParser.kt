@@ -47,9 +47,7 @@ object FeedParser {
 
     private fun parseAtom(feedUrl: String, doc: Document, feed: Element): ParsedFeed {
         val titre = feed.childText("title").orEmpty().ifBlank { hostOf(feedUrl) }
-        val site = feed.childrenNamed("link")
-            .firstOrNull { it.attr("href").isNotBlank() && it.attr("rel") != "self" }
-            ?.attr("href")
+        val site = lienAtom(feed)
         val entries = doc.select("entry").mapNotNull { entryFrom(it) }
         return ParsedFeed(titre, site, "atom", entries)
     }
@@ -58,7 +56,7 @@ object FeedParser {
         val titreBrut = el.childText("title")
         val lien = el.childText("link")
             ?: el.attr("rdf:about").takeIf { it.isNotBlank() }
-            ?: el.childrenNamed("link").firstOrNull()?.attr("href")?.takeIf { it.isNotBlank() }
+            ?: lienAtom(el)
         val guid = el.childText("guid")
             ?: lien
             ?: el.childText("pubdate")?.let { "$titreBrut|$it" }
@@ -85,9 +83,7 @@ object FeedParser {
 
     private fun entryFrom(el: Element): ParsedItem? {
         val titre = el.childText("title")
-        val lien = el.childrenNamed("link")
-            .firstOrNull { it.attr("href").isNotBlank() && it.attr("rel") != "self" }
-            ?.attr("href")
+        val lien = lienAtom(el)
             ?: el.childText("id")?.takeIf { it.startsWith("http") }
         val guid = el.childText("id") ?: lien ?: titre ?: return null
         val contenu = el.childrenNamed("content").firstOrNull()?.wholeText()
@@ -106,6 +102,59 @@ object FeedParser {
             contentHtml = (contenu ?: resume)?.takeIf { it.isNotBlank() },
             imageUrl = imageFrom(el, contenu ?: resume),
         )
+    }
+
+    // ---------------------------------------------------------- liens Atom
+
+    /** Un `<link>` Atom : relation déclarée (ou null) et adresse déjà résolue en absolu. */
+    data class LienAtom(val rel: String?, val href: String)
+
+    /** Relations qui ne désignent jamais la page de l'article (flux de commentaires, édition, pièce jointe). */
+    private val relationsIgnorees = setOf("self", "replies", "edit", "edit-media", "enclosure")
+
+    /**
+     * Choisit le lien d'un article ou d'un site parmi les `<link>` d'un élément :
+     * d'abord rel absent ou « alternate », sinon le premier lien http qui n'est
+     * ni self, ni replies, ni edit, ni enclosure. Un lien non http est écarté.
+     */
+    fun choisirLienAtom(liens: List<LienAtom>): String? {
+        val valides = liens.filter { it.href.startsWith("http://") || it.href.startsWith("https://") }
+        val prefere = valides.firstOrNull {
+            val rel = it.rel?.trim()?.lowercase().orEmpty()
+            rel.isEmpty() || rel == "alternate"
+        }
+        if (prefere != null) return prefere.href.trim()
+        return valides.firstOrNull { (it.rel?.trim()?.lowercase().orEmpty()) !in relationsIgnorees }
+            ?.href?.trim()
+    }
+
+    /** Lit les `<link href>` de l'élément et applique [choisirLienAtom]. */
+    private fun lienAtom(el: Element): String? {
+        val liens = el.childrenNamed("link").mapNotNull { lien ->
+            val href = absolu(lien.attr("href").trim(), lien) ?: return@mapNotNull null
+            LienAtom(lien.attr("rel").takeIf { it.isNotBlank() }, href)
+        }
+        return choisirLienAtom(liens)
+    }
+
+    /**
+     * Rend [href] absolu : tel quel s'il l'est déjà, sinon résolu contre le
+     * premier `xml:base` absolu trouvé en remontant. Sans base, un lien relatif
+     * est écarté (null) : il ne s'ouvrirait nulle part.
+     */
+    private fun absolu(href: String, el: Element): String? {
+        if (href.isEmpty()) return null
+        if (href.startsWith("http://") || href.startsWith("https://")) return href
+        var courant: Element? = el
+        while (courant != null) {
+            val base = courant.attr("xml:base").trim()
+            if (base.startsWith("http://") || base.startsWith("https://")) {
+                val resolu = runCatching { java.net.URI(base).resolve(href).toString() }.getOrNull()
+                return resolu?.takeIf { it.startsWith("http") }
+            }
+            courant = courant.parent()
+        }
+        return null
     }
 
     // --------------------------------------------------------------- JSON

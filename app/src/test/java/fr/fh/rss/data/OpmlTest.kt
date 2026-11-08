@@ -82,13 +82,14 @@ class OpmlTest {
 
     @Test
     fun `requete fts protegee des caracteres speciaux`() {
-        assertEquals("\"android\" \"kotlin\"", Fts.query("Android Kotlin"))
-        assertEquals("\"android\"", Fts.query("android*"))
-        assertEquals("\"a\" \"b\"", Fts.query("a - b"))
+        // Seul le dernier mot est un préfixe ; l'étoile saisie est retirée.
+        assertEquals("\"android\" \"kotlin*\"", Fts.query("Android Kotlin"))
+        assertEquals("\"android*\"", Fts.query("android*"))
+        assertEquals("\"a\" \"b*\"", Fts.query("a - b"))
         assertEquals("\"\"", Fts.query("   "))
         // 8 mots maximum
         val longue = Fts.query("un deux trois quatre cinq six sept huit neuf dix")
-        assertEquals(8, Regex("\"").findAll(longue).count() / 2)
+        assertEquals(8, Regex("\"[^\"]+\"").findAll(longue).count())
     }
 
     @Test

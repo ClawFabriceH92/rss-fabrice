@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -35,12 +36,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import fr.fh.rss.BuildConfig
+import fr.fh.rss.data.ApercuArchive
+import fr.fh.rss.data.Filtre
 import fr.fh.rss.data.Reglages
+import fr.fh.rss.data.TailleTexte
 import fr.fh.rss.data.db.FeedEntity
 import fr.fh.rss.update.UpdateManager
 
@@ -63,8 +71,13 @@ fun EcranReglages(
     onOnglet: (Int) -> Unit = {},
     modelesOllama: List<String> = emptyList(),
     etatOllama: String? = null,
+    /** Suppression de sources : la confirmation est affichée par l'écran principal. */
+    onDemanderSuppression: (List<Long>) -> Unit = {},
 ) {
     val contexte = LocalContext.current
+    val portee = androidx.compose.runtime.rememberCoroutineScope()
+    // Réduction d'archive en attente de confirmation.
+    var reductionEnAttente by remember { androidx.compose.runtime.mutableStateOf<ApercuArchive?>(null) }
     var urlSaisie by remember(reglages.ollamaUrl) {
         androidx.compose.runtime.mutableStateOf(reglages.ollamaUrl)
     }
@@ -72,12 +85,8 @@ fun EcranReglages(
     val selecteurOpml = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
-        if (uri != null) {
-            val texte = runCatching {
-                contexte.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-            }.getOrNull()
-            if (texte != null) vm.importerOpml(texte)
-        }
+        // Lecture hors du thread principal et erreur signalée : voir le ViewModel.
+        if (uri != null) vm.importerOpmlDepuis(uri)
     }
 
     // Pas de Scaffold ni de barre ici : celle de l'écran principal porte déjà le
@@ -109,8 +118,8 @@ fun EcranReglages(
                     sources = sourcesEnEchec,
                     onReessayer = { vm.reessayerSource(it) },
                     onReessayerTout = { ids -> vm.reessayerToutesLesSources(ids) },
-                    onSupprimer = { vm.supprimerFlux(it) },
-                    onSupprimerTout = { ids -> vm.supprimerFluxEnEchec(ids) },
+                    onSupprimer = { onDemanderSuppression(listOf(it)) },
+                    onSupprimerTout = { ids -> onDemanderSuppression(ids) },
                 )
             }
             return@Column
@@ -156,19 +165,27 @@ fun EcranReglages(
             item { Titre("Notifications") }
 
             item {
+                // Sans collecte de fond, rien ne peut partir : l'option est grisée et le dit.
                 LigneBascule(
                     titre = "Nouveaux articles",
-                    detail = "Une notification après une collecte qui rapporte du neuf " +
-                        "(3 titres en aperçu).",
+                    detail = if (reglages.collectePeriodique) {
+                        "Une notification après une collecte qui rapporte du neuf " +
+                            "(3 titres en aperçu)."
+                    } else {
+                        "Inactif : active la collecte périodique ci-dessus pour être notifié."
+                    },
                     actif = reglages.notifierNouveaux,
+                    modifiable = reglages.collectePeriodique,
                 ) { vm.setNotifierNouveaux(it) }
             }
 
             item {
                 LigneBascule(
                     titre = "Silence la nuit",
-                    detail = "Aucune notification entre 22 h et 7 h.",
+                    detail = "Aucune notification entre 22 h et 7 h : les articles reçus " +
+                        "la nuit sont annoncés à la première collecte du matin.",
                     actif = reglages.silenceNuit,
+                    modifiable = reglages.collectePeriodique,
                 ) { vm.setSilenceNuit(it) }
             }
 
@@ -205,6 +222,48 @@ fun EcranReglages(
                 }
             }
 
+            item {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Text("Taille du texte du lecteur", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "S'ajoute à la taille de police choisie dans les réglages du téléphone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        Modifier.padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = { vm.setTailleTexte(TailleTexte.moins(reglages.tailleTexte)) },
+                            enabled = TailleTexte.peutDiminuer(reglages.tailleTexte),
+                            modifier = Modifier
+                                .defaultMinSize(minWidth = CIBLE_TACTILE_MIN, minHeight = CIBLE_TACTILE_MIN)
+                                .semantics { contentDescription = "Réduire le texte du lecteur" },
+                        ) { Text("A-") }
+                        Text(
+                            "${reglages.tailleTexte} %",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.semantics {
+                                contentDescription = "Texte du lecteur à ${reglages.tailleTexte} pour cent"
+                            },
+                        )
+                        OutlinedButton(
+                            onClick = { vm.setTailleTexte(TailleTexte.plus(reglages.tailleTexte)) },
+                            enabled = TailleTexte.peutAugmenter(reglages.tailleTexte),
+                            modifier = Modifier
+                                .defaultMinSize(minWidth = CIBLE_TACTILE_MIN, minHeight = CIBLE_TACTILE_MIN)
+                                .semantics { contentDescription = "Agrandir le texte du lecteur" },
+                        ) { Text("A+") }
+                        TextButton(
+                            onClick = { vm.setTailleTexte(TailleTexte.DEFAUT) },
+                            enabled = reglages.tailleTexte != TailleTexte.DEFAUT,
+                        ) { Text("Rétablir") }
+                    }
+                }
+            }
+
             item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
             item { Titre("Archive locale") }
 
@@ -219,7 +278,17 @@ fun EcranReglages(
                         for (valeur in archives) {
                             FilterChip(
                                 selected = reglages.archiveMax == valeur,
-                                onClick = { vm.setArchiveMax(valeur) },
+                                onClick = {
+                                    portee.launch {
+                                        // Sous le nombre d'articles actuel, la limite purge : on prévient.
+                                        val apercu = runCatching { vm.apercuArchive(valeur) }.getOrNull()
+                                        if (apercu != null && apercu.exigeConfirmation) {
+                                            reductionEnAttente = apercu
+                                        } else {
+                                            vm.setArchiveMax(valeur)
+                                        }
+                                    }
+                                },
                                 label = { Text("${valeur / 1000}k") },
                             )
                         }
@@ -257,8 +326,9 @@ fun EcranReglages(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         OutlinedButton(onClick = {
-                            vm.setOllamaUrl(urlSaisie)
-                            vm.testerOllama()
+                            // L'adresse affichée devient celle qui sera enregistrée et testée.
+                            urlSaisie = fr.fh.rss.data.net.Ollama.normaliser(urlSaisie)
+                            vm.enregistrerEtTesterOllama(urlSaisie)
                         }) {
                             Text("Enregistrer et tester")
                         }
@@ -267,7 +337,7 @@ fun EcranReglages(
                         Text(
                             etatOllama,
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (etatOllama.startsWith("Injoignable")) {
+                            color = if (fr.fh.rss.data.net.Ollama.estEtatErreur(etatOllama)) {
                                 MaterialTheme.colorScheme.error
                             } else {
                                 VertIa
@@ -324,11 +394,13 @@ fun EcranReglages(
             }
 
             item {
+                // Les réglages n'affichent aucune liste : ici, c'est bien tout le parc
+                // (une Snackbar permet d'annuler).
                 TextButton(
-                    onClick = { vm.marquerToutLu() },
+                    onClick = { vm.marquerToutLu(Filtre.Tous) },
                     modifier = Modifier.padding(horizontal = 8.dp),
                 ) {
-                    Text("Tout marquer comme lu")
+                    Text("Tout marquer comme lu (tous les articles)")
                 }
             }
 
@@ -366,6 +438,17 @@ fun EcranReglages(
             }
         }
     }
+
+    reductionEnAttente?.let { apercu ->
+        DialogueReductionArchive(
+            apercu = apercu,
+            onConfirmer = {
+                reductionEnAttente = null
+                vm.setArchiveMax(apercu.limite)
+            },
+            onFermer = { reductionEnAttente = null },
+        )
+    }
 }
 
 @Composable
@@ -383,6 +466,7 @@ private fun LigneBascule(
     titre: String,
     detail: String,
     actif: Boolean,
+    modifiable: Boolean = true,
     onChange: (Boolean) -> Unit,
 ) {
     Row(
@@ -390,14 +474,19 @@ private fun LigneBascule(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(titre, style = MaterialTheme.typography.bodyLarge)
+            val attenue = if (modifiable) 1f else 0.5f
+            Text(
+                titre,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.alpha(attenue),
+            )
             Text(
                 detail,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Switch(checked = actif, onCheckedChange = onChange)
+        Switch(checked = actif, onCheckedChange = onChange, enabled = modifiable)
     }
 }
 

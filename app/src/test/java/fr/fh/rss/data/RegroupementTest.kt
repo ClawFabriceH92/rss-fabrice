@@ -109,4 +109,20 @@ class RegroupementTest {
         assertEquals("Fiscalité et droit", themes.first().first)
         assertTrue(themes.any { it.first == Regroupement.THEME_AUTRE })
     }
+
+    @Test
+    fun `l'onglet IA regroupe par titre sans tenir compte du dedoublonnage des listes`() {
+        // Deux articles de la même source au même titre : un seul groupe, mais pas un « doublon »
+        // (une seule source). La liste d'accueil, elle, les garde tous les deux (voir DoublonsTest).
+        val articles = listOf(
+            article(1, 1, "Les offres d'emploi de la semaine à Asnières"),
+            article(2, 1, "Les offres d'emploi de la semaine à Asnières"),
+        )
+
+        val groupes = Regroupement.regrouper(articles, sources)
+
+        assertEquals(1, groupes.size)
+        assertFalse(groupes.single().doublon)
+        assertEquals(2, Regroupement.dedoublonner(articles).size)
+    }
 }

@@ -4,7 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import fr.fh.rss.RssApp
+import fr.fh.rss.data.ApercuArchive
+import fr.fh.rss.data.Avertissements
+import fr.fh.rss.data.LectureOpml
 import fr.fh.rss.data.Filtre
+import fr.fh.rss.data.Regroupement
 import fr.fh.rss.data.Reglages
 import fr.fh.rss.data.db.ArticleEntity
 import fr.fh.rss.data.db.ArticleLigne
@@ -12,27 +16,43 @@ import fr.fh.rss.data.db.FeedEntity
 import fr.fh.rss.data.db.FolderEntity
 import fr.fh.rss.data.model.AddResult
 import fr.fh.rss.data.model.FeedUnread
-import fr.fh.rss.data.model.FolderUnread
 import fr.fh.rss.data.model.RefreshSummary
 import fr.fh.rss.work.RefreshScheduler
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Ce que l'écran principal affiche. */
 data class Selection(val filtre: Filtre, val titre: String)
 
+/** Articles que « Tout marquer comme lu » vient de passer à lus : de quoi annuler. */
+data class AnnulationLecture(val ids: List<Long>)
+
 /** Taille d'une page de liste, et plafond pour ne pas tout charger en mémoire. */
 const val LIMITE_PAGE = 500
 const val LIMITE_MAX = 5000
+
+/**
+ * « Charger plus » n'a de sens que si la page demandée est pleine (il peut y
+ * avoir la suite) et que le plafond n'est pas atteint : au plafond, le bouton
+ * ne ferait plus rien.
+ */
+internal fun peutChargerPlus(affiches: Int, limite: Int): Boolean =
+    affiches >= limite && limite < LIMITE_MAX
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -54,11 +74,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         .map { liste: List<FeedUnread> -> liste.associate { it.feedId to it.nombre } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    val nonLusParDossier: StateFlow<Map<Long, Int>> = depot.observeUnreadByFolder()
-        .map { liste: List<FolderUnread> -> liste.associate { it.folderId to it.nombre } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+    /**
+     * Non lus, réduits à de quoi dédoublonner : les compteurs de dossier et le
+     * total comptent ce que la liste « Non lus » affiche, pas les lignes SQL.
+     * Les doublons d'autres sources, masqués dans la liste, ne gonflent plus
+     * le badge. (Les compteurs par source restent ceux de la base : le
+     * dédoublonnage ne joue qu'entre sources différentes.)
+     */
+    private val nonLusCles = depot.observeNonLusCles()
+        .shareIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), replay = 1)
 
-    val nonLusTotal: StateFlow<Int> = depot.observeUnreadTotal()
+    val nonLusParDossier: StateFlow<Map<Long, Int>> =
+        combine(nonLusCles, depot.observeFeeds()) { cles, flux ->
+            Regroupement.nombreParDossier(cles, flux.associate { it.id to it.folderId })
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    val nonLusTotal: StateFlow<Int> = nonLusCles
+        .map { Regroupement.nombreAffiche(it) }
+        .flowOn(Dispatchers.Default)
+        .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     private val _selection = MutableStateFlow(Selection(Filtre.Tous, "Tous les articles"))
@@ -87,20 +123,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * l'onglet IA a besoin pour montrer qui a publié quoi.
      */
     val articlesAffiches: StateFlow<List<ArticleLigne>> = articles
-        .map { fr.fh.rss.data.Regroupement.dedoublonner(it) }
+        .map { Regroupement.dedoublonner(it) }
+        // Le dédoublonnage parcourt jusqu'à 5 000 articles : pas sur le thread principal.
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
      * Autres parutions du même article (même adresse ou même titre), source par
      * source : sert au « vu aussi sur … » de la liste et du lecteur.
      */
-    val autresVersions: StateFlow<Map<Long, List<fr.fh.rss.data.Regroupement.AutreVersion>>> =
+    val autresVersions: StateFlow<Map<Long, List<Regroupement.AutreVersion>>> =
         combine(articles, sources) { liste, flux ->
-            fr.fh.rss.data.Regroupement.autresVersions(
+            Regroupement.autresVersions(
                 liste,
                 flux.associate { it.id to it.title },
             )
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private val _enCours = MutableStateFlow(false)
     val enCours: StateFlow<Boolean> = _enCours.asStateFlow()
@@ -115,6 +155,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
+
+    /** Dernier marquage « lu » en masse, proposé à l'annulation par une Snackbar. */
+    private val _annulationLecture = MutableStateFlow<AnnulationLecture?>(null)
+    val annulationLecture: StateFlow<AnnulationLecture?> = _annulationLecture.asStateFlow()
 
     // ------------------------------------------------------------ onglet IA
     private val ollama = fr.fh.rss.data.net.Ollama()
@@ -165,22 +209,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _limite.value = (_limite.value + LIMITE_PAGE).coerceAtMost(LIMITE_MAX)
     }
 
-    /** Collecte systématique au lancement, puis à la demande. */
-    fun rafraichir(silencieux: Boolean = false) {
+    /**
+     * Collecte systématique au lancement, puis à la demande. Une actualisation
+     * demandée par l'utilisateur passe [ignorerRepos] à vrai : elle réinterroge
+     * aussi les sources au repos ; la collecte automatique les laisse tranquilles.
+     */
+    fun rafraichir(silencieux: Boolean = false, ignorerRepos: Boolean = false) {
         if (_enCours.value) return
         viewModelScope.launch {
             _enCours.value = true
             _dernierBilan.value = null
             _progres.value = ProgresCollecte(0, 0)
             val bilan = runCatching {
-                depot.refreshAll(onProgres = { faits, total ->
-                    _progres.value = ProgresCollecte(faits, total)
-                })
+                depot.refreshAll(
+                    ignorerRepos = ignorerRepos,
+                    onProgres = { faits, total ->
+                        _progres.value = ProgresCollecte(faits, total)
+                    },
+                )
             }.getOrElse { RefreshSummary(echecs = listOf("collecte" to (it.message ?: "erreur"))) }
             _enCours.value = false
             _progres.value = null
             // Le succès passe par la pastille animée ; la barre de messages est
             // réservée aux échecs, pour ne pas dire deux fois la même chose.
+            // Hors connexion, la pastille dit « Pas de connexion » : rien de plus.
             // Une source qui échoue depuis le seuil de proposition est signalée
             // à part : c'est une décision à prendre, pas une panne passagère.
             val propositions = runCatching { depot.sourcesAExaminer() }.getOrDefault(emptyList())
@@ -257,33 +309,53 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Favoris que la suppression de ces sources laisserait en place (pour la confirmation). */
+    suspend fun nombreFavoris(feedIds: Collection<Long>): Int =
+        runCatching { depot.nombreFavoris(feedIds) }.getOrDefault(0)
+
+    /** Ce que ferait la limite d'archive [limite] (pour avertir avant de réduire). */
+    suspend fun apercuArchive(limite: Int): ApercuArchive = depot.apercuArchive(limite)
+
+    /** Phrase de fin de suppression, avec le nombre de favoris conservés s'il y en a. */
+    private fun messageSuppression(supprimees: Int, favoris: Int): String {
+        val base = when {
+            supprimees == 0 -> return "Aucune source supprimée."
+            supprimees == 1 -> "1 source supprimée"
+            else -> "$supprimees sources supprimées"
+        }
+        return when (favoris) {
+            0 -> "$base."
+            1 -> "$base, 1 favori conservé."
+            else -> "$base, $favoris favoris conservés."
+        }
+    }
+
     fun supprimerFlux(feedId: Long) {
         viewModelScope.launch {
+            val favoris = nombreFavoris(listOf(feedId))
             depot.deleteFeed(feedId)
             if ((_selection.value.filtre as? Filtre.Flux)?.id == feedId) {
                 _selection.value = Selection(Filtre.Tous, "Tous les articles")
             }
-            _message.value = "Source supprimée."
+            _message.value = messageSuppression(1, favoris)
         }
     }
 
     /**
      * Supprime d'un coup toutes les sources en échec (paramétrage, onglet
-     * « Flux en erreur »). Les articles déjà téléchargés partent avec elles.
+     * « Flux en erreur »). Les articles déjà téléchargés partent avec elles,
+     * sauf les favoris.
      */
     fun supprimerFluxEnEchec(feedIds: List<Long>) {
         if (feedIds.isEmpty()) return
         viewModelScope.launch {
+            val favoris = nombreFavoris(feedIds)
             val supprimees = runCatching { depot.deleteFeeds(feedIds) }.getOrDefault(0)
             val filtre = _selection.value.filtre
             if (filtre is Filtre.Flux && filtre.id in feedIds) {
                 _selection.value = Selection(Filtre.Tous, "Tous les articles")
             }
-            _message.value = when {
-                supprimees == 0 -> "Aucune source supprimée."
-                supprimees == 1 -> "1 source supprimée."
-                else -> "$supprimees sources supprimées."
-            }
+            _message.value = messageSuppression(supprimees, favoris)
         }
     }
 
@@ -291,27 +363,62 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { depot.markFeedRead(feedId) }
     }
 
-    fun marquerToutLu() {
+    /**
+     * Marque comme lus les articles non lus de [filtre] (par défaut la sélection
+     * courante, pas tout le parc) et propose d'annuler.
+     */
+    fun marquerToutLu(filtre: Filtre = _selection.value.filtre) {
         viewModelScope.launch {
-            depot.markAllRead()
-            _message.value = "Tous les articles sont marqués comme lus."
+            val ids = depot.marquerSelectionLue(filtre)
+            if (ids.isEmpty()) {
+                _message.value = "Aucun article non lu à marquer."
+            } else {
+                _annulationLecture.value = AnnulationLecture(ids)
+            }
         }
     }
 
+    /** Remet à « non lu » les articles du dernier marquage en masse. */
+    fun annulerMarquageLu(ids: List<Long>) {
+        viewModelScope.launch { depot.annulerMarquageLu(ids) }
+    }
+
+    fun effacerAnnulationLecture() {
+        _annulationLecture.value = null
+    }
+
+    /**
+     * Doublons masqués d'un article affiché (même article chez d'autres
+     * sources) : les lire ou les balayer avec lui évite des non lus fantômes
+     * que la liste ne montre jamais.
+     */
+    private fun doublonsMasques(articleId: Long): List<Long> =
+        autresVersions.value[articleId].orEmpty().map { it.articleId }
+
     fun basculerLu(article: ArticleLigne) {
-        viewModelScope.launch { depot.setRead(article.id, !article.isRead) }
+        val ids = listOf(article.id) + doublonsMasques(article.id)
+        viewModelScope.launch { depot.setReadGroupe(ids, !article.isRead) }
     }
 
     fun marquerLu(articleId: Long) {
-        viewModelScope.launch { depot.setRead(articleId, true) }
+        val ids = listOf(articleId) + doublonsMasques(articleId)
+        viewModelScope.launch { depot.setReadGroupe(ids, true) }
     }
 
     fun basculerFavori(article: ArticleLigne) {
-        viewModelScope.launch { depot.setStarred(article.id, !article.isStarred) }
+        basculerFavori(article.id, !article.isStarred)
     }
 
+    /**
+     * Mettre de côté promet la lecture hors connexion : au passage en favori,
+     * le texte complet est téléchargé si le réseau est là (sinon la collecte
+     * suivante s'en chargera).
+     */
     fun basculerFavori(articleId: Long, favori: Boolean) {
-        viewModelScope.launch { depot.setStarred(articleId, favori) }
+        viewModelScope.launch {
+            depot.setStarred(articleId, favori)
+            if (favori) runCatching { depot.fetchFullContent(articleId) }
+        }
     }
 
     fun observerArticle(id: Long): Flow<ArticleEntity?> = depot.observeArticle(id)
@@ -321,19 +428,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { depot.fetchFullContent(articleId) }
     }
 
+    /**
+     * Import depuis le fichier choisi : la lecture se fait hors du thread principal
+     * et un fichier illisible est signalé, au lieu de ne rien faire.
+     */
+    fun importerOpmlDepuis(uri: android.net.Uri) {
+        viewModelScope.launch {
+            val texte = withContext(Dispatchers.IO) {
+                runCatching {
+                    LectureOpml.lire(getApplication<Application>().contentResolver.openInputStream(uri))
+                }.getOrNull()
+            }
+            if (texte == null) {
+                _message.value = Avertissements.OPML_ILLISIBLE
+                return@launch
+            }
+            importerOpml(texte)
+        }
+    }
+
     fun importerOpml(contenu: String) {
         viewModelScope.launch {
             _enCours.value = true
             val bilan = runCatching { depot.importOpml(contenu) }
             _enCours.value = false
             val resultat = bilan.getOrNull()
-            _message.value = if (resultat == null) {
-                "Import impossible : fichier OPML illisible."
-            } else {
-                "${resultat.sources} source(s) et ${resultat.dossiers} dossier(s) importés. Collecte en cours…"
+            _message.value = when {
+                resultat == null -> Avertissements.OPML_ILLISIBLE
+                resultat.lues == 0 -> Avertissements.OPML_SANS_SOURCE
+                resultat.sources == 0 && resultat.dossiers == 0 ->
+                    "Ces sources sont déjà dans l'application."
+                else ->
+                    "${resultat.sources} source(s) et ${resultat.dossiers} dossier(s) importés. Collecte en cours…"
             }
             if (resultat != null && resultat.sources > 0) rafraichir(silencieux = true)
         }
+    }
+
+    /** Message à l'utilisateur depuis un écran (affiché par la barre de message de l'écran principal). */
+    fun signaler(texte: String) {
+        _message.value = texte
     }
 
     fun exporterOpml(onPret: (String) -> Unit) {
@@ -384,48 +518,60 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         .replace("__", "")
         .trim()
 
+    /** Tâche du résumé en cours, pour pouvoir l'annuler. */
+    private var tacheResume: Job? = null
+
     /** Résumé d'un article par le modèle local. */
     fun resumerArticle(articleId: Long) {
-        if (_resumeEnCours.value != null) return
+        if (_resumeEnCours.value != null) {
+            _message.value = "Un résumé est déjà en cours : attends sa fin ou annule-le."
+            return
+        }
         _resumeEnCours.value = articleId
-        viewModelScope.launch {
-            // Les listes ne portent que des extraits : le résumé lit l'article complet.
-            val article = depot.article(articleId)
-            if (article == null) {
-                _resumeEnCours.value = null
-                return@launch
-            }
+        tacheResume = viewModelScope.launch {
             val courant = reglages.value
-            val texte = buildString {
-                append(article.title)
-                append("\n\n")
-                append(
-                    article.textContent
-                        ?: fr.fh.rss.data.net.FeedParser.texteSimple(
-                            article.contentHtml ?: article.summaryHtml,
-                        ),
-                )
-            }
-            runCatching {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    ollama.demander(
-                        base = courant.ollamaUrl,
-                        modele = courant.ollamaModele,
-                        consigne = fr.fh.rss.data.net.Ollama.CONSIGNE_RESUME,
-                        contenu = texte,
-                        nombreTokens = 400,
+            try {
+                // Les listes ne portent que des extraits : le résumé lit l'article complet.
+                val article = depot.article(articleId) ?: return@launch
+                val texte = buildString {
+                    append(article.title)
+                    append("\n\n")
+                    append(
+                        article.textContent
+                            ?: fr.fh.rss.data.net.FeedParser.texteSimple(
+                                article.contentHtml ?: article.summaryHtml,
+                            ),
                     )
                 }
-            }.onSuccess { resume ->
+                val resume = ollama.demander(
+                    base = courant.ollamaUrl,
+                    modele = courant.ollamaModele,
+                    consigne = fr.fh.rss.data.net.Ollama.CONSIGNE_RESUME,
+                    contenu = texte,
+                    nombreTokens = 400,
+                )
                 _resumes.value = _resumes.value + (article.id to nettoyerReponse(resume))
                 _ollamaEtat.value = "Connecté · ${courant.ollamaModele}"
-            }.onFailure { erreur ->
-                val detail = erreur.message ?: "modèle injoignable"
-                _ollamaEtat.value = "Injoignable : $detail"
+            } catch (annule: kotlinx.coroutines.CancellationException) {
+                throw annule
+            } catch (erreur: Exception) {
+                val detail = fr.fh.rss.data.net.Ollama.messageErreur(courant.ollamaUrl, erreur)
+                _ollamaEtat.value = detail
                 _message.value = "Résumé impossible : $detail"
+            } finally {
+                // Un résumé annulé a déjà libéré l'état : ne pas écraser celui d'un autre article.
+                if (_resumeEnCours.value == articleId) _resumeEnCours.value = null
             }
-            _resumeEnCours.value = null
         }
+    }
+
+    /** Annule le résumé en cours : l'appel réseau est coupé, pas seulement masqué. */
+    fun annulerResume() {
+        if (_resumeEnCours.value == null) return
+        tacheResume?.cancel()
+        tacheResume = null
+        _resumeEnCours.value = null
+        _message.value = "Résumé annulé."
     }
 
     /** Synthèse des titres non lus par le modèle local. */
@@ -441,25 +587,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val courant = reglages.value
             val contenu = nonLus.joinToString("\n") { "- ${it.title}" }
-            runCatching {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    ollama.demander(
-                        base = courant.ollamaUrl,
-                        modele = courant.ollamaModele,
-                        consigne = fr.fh.rss.data.net.Ollama.CONSIGNE_SYNTHESE,
-                        contenu = contenu,
-                        nombreTokens = 600,
-                    )
-                }
-            }.onSuccess { texte ->
+            try {
+                val texte = ollama.demander(
+                    base = courant.ollamaUrl,
+                    modele = courant.ollamaModele,
+                    consigne = fr.fh.rss.data.net.Ollama.CONSIGNE_SYNTHESE,
+                    contenu = contenu,
+                    nombreTokens = 600,
+                )
                 _synthese.value = nettoyerReponse(texte)
                 _ollamaEtat.value = "Connecté · ${courant.ollamaModele}"
-            }.onFailure { erreur ->
-                val detail = erreur.message ?: "modèle injoignable"
-                _ollamaEtat.value = "Injoignable : $detail"
+            } catch (annule: kotlinx.coroutines.CancellationException) {
+                throw annule
+            } catch (erreur: Exception) {
+                val detail = fr.fh.rss.data.net.Ollama.messageErreur(courant.ollamaUrl, erreur)
+                _ollamaEtat.value = detail
                 _message.value = "Synthèse impossible : $detail"
+            } finally {
+                _iaEnCours.value = false
             }
-            _iaEnCours.value = false
         }
     }
 
@@ -483,34 +629,50 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Test de connexion au serveur Ollama et liste des modèles installés. */
-    fun testerOllama() {
+    /**
+     * Test de connexion au serveur Ollama et liste des modèles installés.
+     * [adresse] : l'adresse à tester (celle qui vient d'être saisie) ; par
+     * défaut, celle des réglages.
+     */
+    fun testerOllama(adresse: String = reglages.value.ollamaUrl) {
+        viewModelScope.launch { testerAdresse(adresse) }
+    }
+
+    /**
+     * « Enregistrer et tester » : l'adresse est enregistrée (normalisée), puis le
+     * test part sur cette même valeur, sans attendre que les réglages se
+     * rafraîchissent (sinon le test visait l'ancienne adresse).
+     */
+    fun enregistrerEtTesterOllama(saisie: String) {
         viewModelScope.launch {
-            val courant = reglages.value
-            runCatching {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    ollama.modeles(courant.ollamaUrl)
-                }
-            }.onSuccess { liste ->
-                _modelesOllama.value = liste
-                _iaDisponible.value = true
-                _ollamaEtat.value = if (liste.isEmpty()) {
-                    "Serveur joignable, aucun modèle installé"
-                } else {
-                    "Connecté · ${liste.size} modèle(s)"
-                }
-                _message.value = if (liste.isEmpty()) {
-                    "Serveur joignable, aucun modèle installé."
-                } else {
-                    "Serveur joignable : ${liste.size} modèle(s)."
-                }
-            }.onFailure { erreur ->
-                _modelesOllama.value = emptyList()
-                _iaDisponible.value = false
-                val detail = erreur.message ?: "injoignable"
-                _ollamaEtat.value = "Injoignable : $detail"
-                _message.value = "Ollama injoignable : $detail"
+            reglagesDepot.setOllamaUrl(saisie)
+            testerAdresse(saisie)
+        }
+    }
+
+    private suspend fun testerAdresse(adresse: String) {
+        try {
+            val liste = ollama.modeles(adresse)
+            _modelesOllama.value = liste
+            _iaDisponible.value = true
+            _ollamaEtat.value = if (liste.isEmpty()) {
+                "Serveur joignable, aucun modèle installé"
+            } else {
+                "Connecté · ${liste.size} modèle(s)"
             }
+            _message.value = if (liste.isEmpty()) {
+                "Serveur joignable, aucun modèle installé."
+            } else {
+                "Serveur joignable : ${liste.size} modèle(s)."
+            }
+        } catch (annule: kotlinx.coroutines.CancellationException) {
+            throw annule
+        } catch (erreur: Exception) {
+            _modelesOllama.value = emptyList()
+            _iaDisponible.value = false
+            val detail = fr.fh.rss.data.net.Ollama.messageErreur(adresse, erreur)
+            _ollamaEtat.value = detail
+            _message.value = detail
         }
     }
 
@@ -528,6 +690,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setTheme(valeur: String) = viewModelScope.launch { reglagesDepot.setTheme(valeur) }
 
     fun setVue(valeur: String) = viewModelScope.launch { reglagesDepot.setVue(valeur) }
+
+    /** Taille du texte du lecteur (pour cent), ramenée dans la plage permise à l'écriture. */
+    fun setTailleTexte(pourcent: Int) =
+        viewModelScope.launch { reglagesDepot.setTailleTexte(pourcent) }
 
     fun setCollectePeriodique(actif: Boolean) {
         viewModelScope.launch {

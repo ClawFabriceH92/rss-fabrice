@@ -7,6 +7,7 @@ import fr.fh.rss.data.FeedRepository
 import fr.fh.rss.data.SettingsRepository
 import fr.fh.rss.data.db.AppDatabase
 import fr.fh.rss.data.net.Http
+import fr.fh.rss.data.net.Reseau
 import kotlinx.coroutines.flow.first
 
 class RssApp : Application() {
@@ -35,6 +36,7 @@ class AppContainer(context: Context) {
             http = http,
             archiveMax = { settings.flow.first().archiveMax },
             transaction = { bloc -> base.withTransaction { bloc() } },
+            reseauDisponible = { Reseau.disponible(app) },
         )
     }
 }

@@ -22,7 +22,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -69,6 +71,7 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -96,6 +99,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -111,10 +122,29 @@ import kotlinx.coroutines.launch
 /** Écrans de l'application (pas de bibliothèque de navigation : quelques états suffisent). */
 sealed interface Ecran {
     data object Liste : Ecran
-    data class Lecteur(val articleId: Long) : Ecran
+    /** [origine] : écran d'où l'article a été ouvert (liste ou IA), où revient « Retour ». */
+    data class Lecteur(val articleId: Long, val origine: Ecran = Liste) : Ecran
     data object Ia : Ecran
     data object Reglages : Ecran
 }
+
+/** Suppression de sources en attente de confirmation ([favoris] : articles qui seront conservés). */
+private data class DemandeSuppression(
+    val ids: List<Long>,
+    val titre: String?,
+    val favoris: Int,
+    val depuisLecteur: Boolean,
+)
+
+/** « Tout marquer comme lu » parle de tout le parc seulement quand la sélection est globale. */
+private fun libelleToutLu(filtre: Filtre): String =
+    if (filtre == Filtre.Tous || filtre == Filtre.NonLus) "Tout marquer comme lu"
+    else "Marquer la sélection comme lue"
+
+/** Nom de la source d'un article ; un favori dont la source a été supprimée le dit. */
+internal fun nomSource(titres: Map<Long, String>, feedId: Long): String =
+    // Tant que les sources ne sont pas chargées, la liste est vide : pas de faux « supprimée ».
+    titres[feedId] ?: if (titres.isEmpty()) "" else fr.fh.rss.data.Avertissements.SOURCE_SUPPRIMEE
 
 /** Vert de l'onglet IA quand le serveur local répond (partagé avec les réglages). */
 internal val VertIa = Color(0xFF2E9E4F)
@@ -154,12 +184,18 @@ fun AppRoot(
     onLienUtilise: () -> Unit,
 ) {
     val contexte = LocalContext.current
-    var ecran by remember { mutableStateOf<Ecran>(Ecran.Liste) }
+    // Écran courant sauvegardé (type + identifiant d'article) : la rotation ou un
+    // changement de taille de police recrée l'activité sans renvoyer à la liste.
+    var ecran by rememberSaveable(stateSaver = SaverEcran) { mutableStateOf<Ecran>(Ecran.Liste) }
     // Onglet du paramétrage : 0 = réglages, 1 = flux en erreur.
     var ongletReglages by rememberSaveable { mutableStateOf(0) }
     var menuListe by remember { mutableStateOf(false) }
-    var rechercheOuverte by remember { mutableStateOf(false) }
-    var texteRecherche by remember { mutableStateOf("") }
+    var rechercheOuverte by rememberSaveable { mutableStateOf(false) }
+    var texteRecherche by rememberSaveable { mutableStateOf("") }
+    // Suppression de sources en attente de confirmation (tous les chemins passent par là).
+    var demandeSuppression by remember { mutableStateOf<DemandeSuppression?>(null) }
+    // Défilement de la liste, hissé au-dessus du `when` : il survit à l'ouverture d'un article.
+    val etatListe = rememberLazyListState()
     var dialogueAjout by remember { mutableStateOf(false) }
     var dialogueDossier by remember { mutableStateOf(false) }
     var sourceADeplacer by remember { mutableStateOf<FeedEntity?>(null) }
@@ -229,6 +265,34 @@ fun AppRoot(
         }
     }
 
+    // La requête vit dans le ViewModel (elle survit à la recréation) ; après une
+    // mort du processus, on la rétablit depuis le texte sauvegardé.
+    LaunchedEffect(Unit) {
+        if (rechercheOuverte && vm.recherche.value != texteRecherche) vm.setRecherche(texteRecherche)
+    }
+
+    val annulationLecture by vm.annulationLecture.collectAsState()
+    LaunchedEffect(annulationLecture) {
+        val annulation = annulationLecture ?: return@LaunchedEffect
+        val nombre = annulation.ids.size
+        val resultat = snackbar.showSnackbar(
+            message = if (nombre == 1) "1 article marqué comme lu" else "$nombre articles marqués comme lus",
+            actionLabel = "Annuler",
+            withDismissAction = true,
+            duration = SnackbarDuration.Long,
+        )
+        if (resultat == SnackbarResult.ActionPerformed) vm.annulerMarquageLu(annulation.ids)
+        vm.effacerAnnulationLecture()
+    }
+
+    // Une suppression passe toujours par une confirmation qui annonce les favoris conservés.
+    val demanderSuppression: (List<Long>, String?, Boolean) -> Unit = { ids, titre, depuisLecteur ->
+        portee.launch {
+            val favoris = vm.nombreFavoris(ids)
+            demandeSuppression = DemandeSuppression(ids, titre, favoris, depuisLecteur)
+        }
+    }
+
     LaunchedEffect(message) {
         val texte = message
         if (texte != null) {
@@ -237,13 +301,16 @@ fun AppRoot(
         }
     }
 
-    BackHandler(enabled = ecran != Ecran.Liste || rechercheOuverte) {
-        if (rechercheOuverte) {
+    // Le lecteur d'abord : Retour revient à l'écran d'origine (liste ou IA) sans
+    // toucher à la recherche, pour retrouver ses résultats. La recherche ne se
+    // ferme qu'à un Retour donné depuis la liste elle-même.
+    BackHandler(enabled = retourActif(ecran, rechercheOuverte)) {
+        if (ecran != Ecran.Liste) {
+            ecran = ecran.retour()
+        } else {
             rechercheOuverte = false
             texteRecherche = ""
             vm.setRecherche("")
-        } else {
-            ecran = Ecran.Liste
         }
     }
 
@@ -271,13 +338,14 @@ fun AppRoot(
                     onNouveauDossier = { dialogueDossier = true },
                     onDeplacer = { sourceADeplacer = it },
                     onMarquerLu = { vm.marquerSourceLue(it.id) },
-                    onSupprimer = { vm.supprimerFlux(it.id) },
+                    onSupprimer = { demanderSuppression(listOf(it.id), it.title, false) },
                     onMarquerToutLu = { vm.marquerToutLu() },
                     onReglages = {
                         ongletReglages = 0
                         ecran = Ecran.Reglages
                         portee.launch { tiroir.close() }
                     },
+                    libelleToutLu = libelleToutLu(selection.filtre),
                     nombreSourcesEnEchec = sources.count { !it.lastError.isNullOrBlank() },
                     selectionneSourcesEnEchec = ecran == Ecran.Reglages && ongletReglages == 1,
                     onSourcesEnEchec = {
@@ -293,7 +361,7 @@ fun AppRoot(
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
             topBar = {
-                if (rechercheOuverte) {
+                if (barreRechercheVisible(ecran, rechercheOuverte)) {
                     TopAppBar(
                         title = {
                             TextField(
@@ -344,7 +412,7 @@ fun AppRoot(
                                     Icon(Icons.Default.Menu, contentDescription = "Menu")
                                 }
                             } else {
-                                IconButton(onClick = { ecran = Ecran.Liste }) {
+                                IconButton(onClick = { ecran = ecran.retour() }) {
                                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
                                 }
                             }
@@ -354,7 +422,7 @@ fun AppRoot(
                                 IconButton(onClick = { rechercheOuverte = true }) {
                                     Icon(Icons.Default.Search, contentDescription = "Rechercher")
                                 }
-                                IconButton(onClick = { vm.rafraichir() }) {
+                                IconButton(onClick = { vm.rafraichir(ignorerRepos = true) }) {
                                     Icon(Icons.Default.Refresh, contentDescription = "Actualiser")
                                 }
                                 // Les actions globales étaient enfouies dans le
@@ -371,7 +439,7 @@ fun AppRoot(
                                         onDismissRequest = { menuListe = false },
                                     ) {
                                         DropdownMenuItem(
-                                            text = { Text("Tout marquer comme lu") },
+                                            text = { Text(libelleToutLu(selection.filtre)) },
                                             leadingIcon = {
                                                 Icon(Icons.Default.Done, contentDescription = null)
                                             },
@@ -496,12 +564,13 @@ fun AppRoot(
                                 titres = titres,
                                 vue = reglages.vue,
                                 enCours = enCours,
-                                onRafraichir = { vm.rafraichir() },
-                                onOuvrir = { ecran = Ecran.Lecteur(it.id) },
+                                onRafraichir = { vm.rafraichir(ignorerRepos = true) },
+                                etatListe = etatListe,
+                                onOuvrir = { ecran = Ecran.Lecteur(it.id, Ecran.Liste) },
                                 onBasculerLu = { vm.basculerLu(it) },
                                 onFavori = { vm.basculerFavori(it) },
                                 autres = autresVersions,
-                                peutChargerPlus = articles.size >= limite,
+                                peutChargerPlus = peutChargerPlus(articles.size, limite),
                                 onChargerPlus = { vm.chargerPlus() },
                             )
                         }
@@ -511,15 +580,19 @@ fun AppRoot(
                         vm = vm,
                         articleId = courant.articleId,
                         autresVersions = autresVersions[courant.articleId].orEmpty(),
-                        onOuvrirVersion = { autreId -> ecran = Ecran.Lecteur(autreId) },
-                        onRetour = { ecran = Ecran.Liste },
+                        onOuvrirVersion = { autreId ->
+                            ecran = Ecran.Lecteur(autreId, courant.origine)
+                        },
+                        onRetour = { ecran = courant.origine },
                         onDesabonnement = { feedId ->
-                            // Supprimer la source retire aussi ses articles :
-                            // la liste d'accueil se met à jour d'elle-même
-                            // (Room), et on revient dessus.
-                            vm.supprimerFlux(feedId)
-                            vm.changerSelection(Selection(Filtre.Tous, "Tous les articles"))
-                            ecran = Ecran.Liste
+                            // La confirmation (avec le nombre de favoris conservés) est
+                            // commune à tous les chemins ; le retour à la liste se fait
+                            // une fois la suppression confirmée.
+                            demanderSuppression(
+                                listOf(feedId),
+                                sources.firstOrNull { it.id == feedId }?.title,
+                                true,
+                            )
                         },
                     )
 
@@ -532,8 +605,9 @@ fun AppRoot(
                         syntheseEnCours = iaEnCours,
                         resumes = resumes,
                         resumeEnCours = resumeEnCours,
-                        onOuvrir = { ecran = Ecran.Lecteur(it.id) },
+                        onOuvrir = { ecran = Ecran.Lecteur(it.id, Ecran.Ia) },
                         onResumer = { vm.resumerArticle(it.id) },
+                        onAnnulerResume = { vm.annulerResume() },
                         onSynthese = { vm.syntheseNonLus() },
                         onEffacerSynthese = { vm.effacerSynthese() },
                         onReglagesIa = {
@@ -549,6 +623,7 @@ fun AppRoot(
                         sourcesEnEchec = sources.filter { !it.lastError.isNullOrBlank() },
                         onglet = ongletReglages,
                         onOnglet = { ongletReglages = it },
+                        onDemanderSuppression = { ids -> demanderSuppression(ids, null, false) },
                         modelesOllama = modelesOllama,
                         etatOllama = etatOllama,
                     )
@@ -618,6 +693,28 @@ fun AppRoot(
         )
     }
 
+    demandeSuppression?.let { demande ->
+        DialogueSuppressionSources(
+            titre = demande.titre,
+            nombre = demande.ids.size,
+            favoris = demande.favoris,
+            onConfirmer = {
+                demandeSuppression = null
+                if (demande.ids.size == 1) vm.supprimerFlux(demande.ids.first())
+                else vm.supprimerFluxEnEchec(demande.ids)
+                if (demande.depuisLecteur) {
+                    // Le lecteur lisait un article de la source retirée : retour à la
+                    // liste complète, recherche fermée pour ne pas la laisser orpheline.
+                    rechercheOuverte = false
+                    texteRecherche = ""
+                    vm.changerSelection(Selection(Filtre.Tous, "Tous les articles"))
+                    ecran = Ecran.Liste
+                }
+            },
+            onFermer = { demandeSuppression = null },
+        )
+    }
+
     DialogueMiseAJour(
         etat = majEtat,
         onTelecharger = { fr.fh.rss.update.UpdateManager.download(contexte) },
@@ -645,6 +742,7 @@ private fun ContenuTiroir(
     onSupprimer: (FeedEntity) -> Unit,
     onMarquerToutLu: () -> Unit,
     onReglages: () -> Unit,
+    libelleToutLu: String = "Tout marquer comme lu",
     nombreSourcesEnEchec: Int = 0,
     selectionneSourcesEnEchec: Boolean = false,
     onSourcesEnEchec: () -> Unit = {},
@@ -778,7 +876,7 @@ private fun ContenuTiroir(
             item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
             item {
                 NavigationDrawerItem(
-                    label = { Text("Tout marquer comme lu") },
+                    label = { Text(libelleToutLu) },
                     icon = { Icon(Icons.Default.Done, contentDescription = null) },
                     selected = false,
                     onClick = onMarquerToutLu,
@@ -907,6 +1005,7 @@ private fun ZoneArticles(
     vue: String,
     enCours: Boolean,
     onRafraichir: () -> Unit,
+    etatListe: LazyListState,
     onOuvrir: (ArticleLigne) -> Unit,
     onBasculerLu: (ArticleLigne) -> Unit,
     onFavori: (ArticleLigne) -> Unit,
@@ -947,18 +1046,20 @@ private fun ZoneArticles(
         } else {
             LazyColumn(
                 Modifier.fillMaxSize(),
+                state = etatListe,
                 contentPadding = PaddingValues(bottom = 96.dp),
             ) {
                 when (vue) {
                     "cartes" -> items(articles, key = { it.id }) { article ->
                         CarteArticle(
                             article = article,
-                            source = titres[article.feedId].orEmpty(),
+                            source = nomSource(titres, article.feedId),
                             grand = false,
                             withImage = true,
                             extrait = extraitDe(article),
                             onOuvrir = { onOuvrir(article) },
                             onFavori = { onFavori(article) },
+                            onBasculerLu = { onBasculerLu(article) },
                         )
                     }
 
@@ -966,18 +1067,19 @@ private fun ZoneArticles(
                         item(key = "une") {
                             CarteArticle(
                                 article = articles.first(),
-                                source = titres[articles.first().feedId].orEmpty(),
+                                source = nomSource(titres, articles.first().feedId),
                                 grand = true,
                                 withImage = true,
                                 extrait = extraitDe(articles.first()),
                                 onOuvrir = { onOuvrir(articles.first()) },
                                 onFavori = { onFavori(articles.first()) },
+                                onBasculerLu = { onBasculerLu(articles.first()) },
                             )
                         }
                         items(articles.drop(1), key = { it.id }) { article ->
                             LigneBalayable(
                                 article = article,
-                                source = titres[article.feedId].orEmpty(),
+                                source = nomSource(titres, article.feedId),
                                 withImage = true,
                                 onOuvrir = { onOuvrir(article) },
                                 onBasculerLu = { onBasculerLu(article) },
@@ -990,7 +1092,7 @@ private fun ZoneArticles(
                     else -> items(articles, key = { it.id }) { article ->
                         LigneBalayable(
                             article = article,
-                            source = titres[article.feedId].orEmpty(),
+                            source = nomSource(titres, article.feedId),
                             withImage = false,
                             onOuvrir = { onOuvrir(article) },
                             onBasculerLu = { onBasculerLu(article) },
@@ -1063,7 +1165,7 @@ private fun LigneBalayable(
         // Fond opaque obligatoire : sans lui, le calque du balayage se voit
         // sous chaque ligne (vécu v1.0.0 : écran entier orange).
         Box(Modifier.background(fondArticle(article.isRead))) {
-            LigneArticle(article, source, withImage, onOuvrir, onFavori, autres)
+            LigneArticle(article, source, withImage, onOuvrir, onFavori, onBasculerLu, autres)
         }
     }
 }
@@ -1075,12 +1177,25 @@ private fun LigneArticle(
     withImage: Boolean,
     onOuvrir: () -> Unit,
     onFavori: () -> Unit,
+    onBasculerLu: () -> Unit,
     autres: List<Regroupement.AutreVersion> = emptyList(),
 ) {
+    val etatLu = TextesAccessibilite.etatLecture(article.isRead)
+    val libelleLecture = TextesAccessibilite.actionLecture(article.isRead)
+    val libelleFavori = TextesAccessibilite.favori(article.isStarred)
     Row(
         Modifier
             .fillMaxWidth()
             .clickable(onClick = onOuvrir)
+            // Le balayage n'est pas le seul moyen de marquer lu : TalkBack propose
+            // ces actions dans son menu, et l'état est dit, pas seulement coloré.
+            .semantics {
+                stateDescription = etatLu
+                customActions = listOf(
+                    CustomAccessibilityAction(libelleLecture) { onBasculerLu(); true },
+                    CustomAccessibilityAction(libelleFavori) { onFavori(); true },
+                )
+            }
             .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.Top,
     ) {
@@ -1092,6 +1207,8 @@ private fun LigneArticle(
             Modifier
                 .padding(top = 7.dp, end = 10.dp)
                 .size(8.dp)
+                // Décoratif : l'état lu / non lu est porté par la description de la ligne.
+                .clearAndSetSemantics { }
                 .clip(CircleShape)
                 .background(
                     if (article.isRead) Color.Transparent else MaterialTheme.colorScheme.primary,
@@ -1133,10 +1250,10 @@ private fun LigneArticle(
                 )
             }
         }
-        IconButton(onClick = onFavori) {
+        IconButton(onClick = onFavori, modifier = Modifier.size(CIBLE_TACTILE_MIN)) {
             Icon(
                 if (article.isStarred) Icons.Default.Star else Icons.Default.StarBorder,
-                contentDescription = "Lire plus tard",
+                contentDescription = libelleFavori,
                 tint = if (article.isStarred) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1164,12 +1281,24 @@ private fun CarteArticle(
     extrait: String = "",
     onOuvrir: () -> Unit,
     onFavori: () -> Unit,
+    onBasculerLu: () -> Unit,
 ) {
+    val etatLu = TextesAccessibilite.etatLecture(article.isRead)
+    val libelleLecture = TextesAccessibilite.actionLecture(article.isRead)
+    val libelleFavori = TextesAccessibilite.favori(article.isStarred)
     Card(
         onClick = onOuvrir,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            // La vue Cartes n'a pas de balayage : ces actions sont le seul geste équivalent.
+            .semantics {
+                stateDescription = etatLu
+                customActions = listOf(
+                    CustomAccessibilityAction(libelleLecture) { onBasculerLu(); true },
+                    CustomAccessibilityAction(libelleFavori) { onFavori(); true },
+                )
+            },
         colors = CardDefaults.cardColors(containerColor = fondArticle(article.isRead)),
     ) {
         // Bandeau toujours présent, pleine largeur : avec l'image du flux quand
@@ -1233,13 +1362,13 @@ private fun CarteArticle(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(onClick = onFavori, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = onFavori, modifier = Modifier.size(CIBLE_TACTILE_MIN)) {
                     Icon(
                         if (article.isStarred) Icons.Default.Star else Icons.Default.StarBorder,
-                        contentDescription = "Lire plus tard",
+                        contentDescription = libelleFavori,
                         tint = if (article.isStarred) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(24.dp),
                     )
                 }
             }
@@ -1270,6 +1399,12 @@ private fun BandeauCollecte(progres: ProgresCollecte?) {
     val fond = MaterialTheme.colorScheme.secondaryContainer
     val encre = MaterialTheme.colorScheme.onSecondaryContainer
     Surface(
+        // Région vive : TalkBack annonce le début et l'avancement de la collecte
+        // sans que l'utilisateur ait à chercher le bandeau.
+        modifier = Modifier.clearAndSetSemantics {
+            liveRegion = LiveRegionMode.Polite
+            contentDescription = TextesAccessibilite.collecte(progres?.faits, progres?.total)
+        },
         shape = RoundedCornerShape(50),
         color = fond,
         tonalElevation = 3.dp,
@@ -1306,8 +1441,9 @@ private fun BandeauCollecte(progres: ProgresCollecte?) {
 @Composable
 private fun PastilleCollecte(bilan: RefreshSummary?) {
     if (bilan == null) return
-    val enEchec = bilan.echecs.isNotEmpty()
+    val enEchec = bilan.echecs.isNotEmpty() || bilan.horsConnexion
     val texte = when {
+        bilan.horsConnexion -> "Pas de connexion"
         bilan.sources == 0 -> "Aucune source à collecter"
         enEchec && bilan.nouveaux > 0 ->
             "${bilan.nouveaux} nouveau(x) · ${bilan.echecs.size} échec(s)"
@@ -1325,6 +1461,8 @@ private fun PastilleCollecte(bilan: RefreshSummary?) {
     else MaterialTheme.colorScheme.onPrimaryContainer
 
     Surface(
+        // Le résultat de la collecte (« 3 nouveaux », « Pas de connexion ») est annoncé aussi.
+        modifier = Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
         shape = RoundedCornerShape(50),
         color = fond,
         tonalElevation = 3.dp,

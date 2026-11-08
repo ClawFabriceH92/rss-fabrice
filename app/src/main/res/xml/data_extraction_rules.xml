@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Sauvegarde automatique et transfert d'appareil Android 12 et plus.
+    Mêmes règles pour la sauvegarde dans le cloud et le transfert direct :
+    la base et les réglages sont repris ; les APK de mise à jour et les
+    exports OPML temporaires ne le sont pas. Le cache n'est jamais sauvegardé.
+    Limite du cloud : environ 25 Mo par application ; au-delà, le système
+    saute la sauvegarde cloud (le transfert d'appareil n'a pas cette limite).
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="database" path="." />
+        <include domain="file" path="datastore/" />
+        <exclude domain="file" path="updates/" />
+        <exclude domain="file" path="exports/" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="database" path="." />
+        <include domain="file" path="datastore/" />
+        <exclude domain="file" path="updates/" />
+        <exclude domain="file" path="exports/" />
+    </device-transfer>
+</data-extraction-rules>

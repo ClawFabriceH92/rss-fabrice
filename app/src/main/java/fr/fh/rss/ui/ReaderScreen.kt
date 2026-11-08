@@ -1,17 +1,23 @@
 package fr.fh.rss.ui
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.text.TextUtils
 import android.webkit.WebView
+import fr.fh.rss.data.Avertissements
+import fr.fh.rss.data.TailleTexte
 import fr.fh.rss.data.net.TitreContenu
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NotificationsOff
@@ -20,10 +26,10 @@ import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,7 +39,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -64,8 +70,13 @@ fun EcranLecteur(
     onOuvrirVersion: (Long) -> Unit = {},
 ) {
     var menuActions by remember { mutableStateOf(false) }
-    var confirmationDesabo by remember { mutableStateOf(false) }
-    val article by vm.observerArticle(articleId).collectAsState(initial = null)
+    // Un seul Flow par article : sans remember, chaque recomposition relançait la
+    // requête Room et relisait le corps complet.
+    val fluxArticle = remember(articleId) { vm.observerArticle(articleId) }
+    val article by fluxArticle.collectAsState(initial = null)
+    val reglages by vm.reglages.collectAsState()
+    val echellePolice = LocalDensity.current.fontScale
+    val zoomTexte = TailleTexte.zoomWebView(reglages.tailleTexte, echellePolice)
     val sources by vm.sources.collectAsState()
     val resumes by vm.resumes.collectAsState()
     val resumeEnCours by vm.resumeEnCours.collectAsState()
@@ -84,7 +95,13 @@ fun EcranLecteur(
         return
     }
 
-    val source = sources.firstOrNull { it.id == courant.feedId }?.title.orEmpty()
+    val sourceExiste = sources.any { it.id == courant.feedId }
+    val source = if (sourceExiste || sources.isEmpty()) {
+        sources.firstOrNull { it.id == courant.feedId }?.title.orEmpty()
+    } else {
+        // Favori conservé après la suppression de sa source.
+        fr.fh.rss.data.Avertissements.SOURCE_SUPPRIMEE
+    }
     val couleurTexte = MaterialTheme.colorScheme.onBackground.toArgb()
     val couleurFond = MaterialTheme.colorScheme.background.toArgb()
     val couleurAccent = MaterialTheme.colorScheme.primary.toArgb()
@@ -102,10 +119,9 @@ fun EcranLecteur(
                 },
                 actions = {
                     if (resumeEnCours == courant.id) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.padding(horizontal = 12.dp).size(20.dp),
-                            strokeWidth = 2.dp,
-                        )
+                        IconButton(onClick = { vm.annulerResume() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Annuler le résumé")
+                        }
                     } else {
                         IconButton(onClick = { vm.resumerArticle(courant.id) }) {
                             Icon(
@@ -117,17 +133,25 @@ fun EcranLecteur(
                     IconButton(onClick = { vm.basculerFavori(courant.id, !courant.isStarred) }) {
                         Icon(
                             if (courant.isStarred) Icons.Default.Star else Icons.Default.StarBorder,
-                            contentDescription = "Lire plus tard",
+                            contentDescription = TextesAccessibilite.favori(courant.isStarred),
                         )
                     }
                     IconButton(
                         onClick = {
-                            courant.url?.let { lien ->
-                                runCatching {
+                            val lien = courant.url?.trim()
+                            if (lien.isNullOrEmpty()) {
+                                vm.signaler(Avertissements.ARTICLE_SANS_ADRESSE)
+                            } else {
+                                try {
                                     contexte.startActivity(
                                         Intent(Intent.ACTION_VIEW, android.net.Uri.parse(lien))
                                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                                     )
+                                } catch (_: ActivityNotFoundException) {
+                                    vm.signaler(Avertissements.AUCUN_NAVIGATEUR)
+                                } catch (_: RuntimeException) {
+                                    // Adresse inexploitable (schéma refusé, intent invalide).
+                                    vm.signaler(Avertissements.AUCUN_NAVIGATEUR)
                                 }
                             }
                         },
@@ -180,23 +204,26 @@ fun EcranLecteur(
                                 )
                             }
                             if (autresVersions.isNotEmpty()) HorizontalDivider()
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        "Se désabonner de « ${source.ifBlank { "ce flux" }} »",
-                                    )
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        Icons.Default.NotificationsOff,
-                                        contentDescription = null,
-                                    )
-                                },
-                                onClick = {
-                                    menuActions = false
-                                    confirmationDesabo = true
-                                },
-                            )
+                            if (sourceExiste) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            "Se désabonner de « ${source.ifBlank { "ce flux" }} »",
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.NotificationsOff,
+                                            contentDescription = null,
+                                        )
+                                    },
+                                    onClick = {
+                                        menuActions = false
+                                        // La confirmation (favoris conservés) est gérée par l'écran principal.
+                                        onDesabonnement(courant.feedId)
+                                    },
+                                )
+                            }
                         }
                     }
                 },
@@ -258,7 +285,16 @@ fun EcranLecteur(
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx -> creerWebView(ctx) },
+                    // Libère le moteur de rendu en quittant le lecteur : un WebView
+                    // abandonné garde sa mémoire et ses processus.
+                    onRelease = { vue ->
+                        vue.stopLoading()
+                        vue.destroy()
+                    },
                     update = { vue ->
+                        // Taille du texte : réglage A- / A+ × échelle de police du système.
+                        // Sans rechargement, la position de lecture est conservée.
+                        if (vue.settings.textZoom != zoomTexte) vue.settings.textZoom = zoomTexte
                         // Ne recharger que si le contenu a réellement changé.
                         // Marquer l'article comme lu réémet la fiche (isRead passe
                         // à true) : recharger à ce moment-là renvoyait la lecture
@@ -274,6 +310,23 @@ fun EcranLecteur(
                             )
                         }
                     },
+                )
+            }
+            // Le texte complet n'a pas pu être téléchargé : on le dit, discrètement,
+            // plutôt que de laisser croire que le résumé du flux est tout l'article.
+            if (courant.texteCompletEchec) {
+                Text(
+                    text = fr.fh.rss.data.Avertissements.TEXTE_COMPLET_INDISPONIBLE,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(8.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
+                            RoundedCornerShape(12.dp),
+                        )
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
                 )
             }
             // Pendant le résumé, l'attente s'affiche par-dessus la lecture :
@@ -292,40 +345,13 @@ fun EcranLecteur(
                         phrases = PHRASES_RESUME,
                         modifier = Modifier.padding(14.dp),
                     )
+                    TextButton(
+                        onClick = { vm.annulerResume() },
+                        modifier = Modifier.align(Alignment.End).padding(end = 8.dp),
+                    ) { Text("Annuler") }
                 }
             }
         }
-    }
-
-    if (confirmationDesabo) {
-        AlertDialog(
-            onDismissRequest = { confirmationDesabo = false },
-            title = { Text("Se désabonner ?") },
-            text = {
-                Text(
-                    if (source.isBlank()) {
-                        "Le flux et les articles déjà téléchargés seront retirés " +
-                            "de l'application."
-                    } else {
-                        "« $source » et ses articles déjà téléchargés seront retirés " +
-                            "de l'application. Le site du flux n'est pas modifié."
-                    },
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmationDesabo = false
-                        onDesabonnement(courant.feedId)
-                    },
-                ) {
-                    Text("Se désabonner", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmationDesabo = false }) { Text("Annuler") }
-            },
-        )
     }
 }
 

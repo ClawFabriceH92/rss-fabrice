@@ -83,6 +83,10 @@ interface FeedDao {
     )
     suspend fun marquerEchec(id: Long, at: Long, error: String)
 
+    /** Nouvelle adresse d'un flux après une redirection permanente. */
+    @Query("UPDATE feeds SET url = :url WHERE id = :id")
+    suspend fun updateUrl(id: Long, url: String)
+
     @Query("UPDATE feeds SET title = :title, siteUrl = :siteUrl WHERE id = :id")
     suspend fun updateMeta(id: Long, title: String, siteUrl: String?)
 
@@ -92,7 +96,8 @@ interface FeedDao {
     @Query("DELETE FROM feeds WHERE id = :id")
     suspend fun delete(id: Long)
 
-    @Query("DELETE FROM articles WHERE feedId = :feedId")
+    /** Retire les articles d'une source, sauf ses favoris (« Lire plus tard »), qui sont conservés. */
+    @Query("DELETE FROM articles WHERE feedId = :feedId AND isStarred = 0")
     suspend fun deleteArticles(feedId: Long)
 
     @Query("SELECT feedId AS feedId, COUNT(*) AS nombre FROM articles WHERE isRead = 0 GROUP BY feedId")
@@ -190,8 +195,60 @@ interface ArticleDao {
     @Query("UPDATE articles SET isRead = 1 WHERE isRead = 0")
     suspend fun markAllRead()
 
-    @Query("UPDATE articles SET contentHtml = :html, textContent = :text WHERE id = :id")
-    suspend fun setContent(id: Long, html: String?, text: String?)
+    // Marquage « lu » d'une sélection : on garde les identifiants touchés pour pouvoir annuler.
+
+    @Query("SELECT id FROM articles WHERE isRead = 0")
+    suspend fun idsNonLus(): List<Long>
+
+    @Query("SELECT id FROM articles WHERE isRead = 0 AND isStarred = 1")
+    suspend fun idsNonLusFavoris(): List<Long>
+
+    @Query("SELECT id FROM articles WHERE isRead = 0 AND feedId = :feedId")
+    suspend fun idsNonLusDeLaSource(feedId: Long): List<Long>
+
+    @Query(
+        "SELECT a.id FROM articles a JOIN feeds f ON f.id = a.feedId " +
+            "WHERE a.isRead = 0 AND f.folderId = :folderId",
+    )
+    suspend fun idsNonLusDuDossier(folderId: Long): List<Long>
+
+    @Query("UPDATE articles SET isRead = :lu WHERE id IN (:ids)")
+    suspend fun setReadPourIds(ids: List<Long>, lu: Boolean)
+
+    /** Favoris d'une source : ils survivent à sa suppression. */
+    @Query("SELECT COUNT(*) FROM articles WHERE feedId = :feedId AND isStarred = 1")
+    suspend fun nombreFavoris(feedId: Long): Int
+
+    /** Le texte complet remplace l'existant : la tentative est réussie, l'échec éventuel est effacé. */
+    @Query(
+        "UPDATE articles SET contentHtml = :html, textContent = :text, " +
+            "texteCompletEssaiLe = :at, texteCompletEchec = 0 WHERE id = :id",
+    )
+    suspend fun setContent(id: Long, html: String?, text: String?, at: Long)
+
+    /** Mémorise une tentative sans remplacement (échec, ou texte pas assez complet). */
+    @Query("UPDATE articles SET texteCompletEssaiLe = :at, texteCompletEchec = :echec WHERE id = :id")
+    suspend fun marquerEssaiTexteComplet(id: Long, at: Long, echec: Boolean)
+
+    /**
+     * Favoris à compléter pour la lecture hors connexion : texte court, adresse
+     * connue, jamais tentés ou dont l'échec est assez ancien pour être retenté.
+     */
+    @Query(
+        "SELECT id FROM articles WHERE isStarred = 1 AND url IS NOT NULL " +
+            "AND length(COALESCE(textContent, '')) <= :seuil " +
+            "AND (texteCompletEssaiLe IS NULL OR (texteCompletEchec = 1 AND texteCompletEssaiLe < :avant)) " +
+            "ORDER BY publishedAt DESC LIMIT :limite",
+    )
+    suspend fun favorisACompleter(seuil: Int, avant: Long, limite: Int): List<Long>
+
+    /**
+     * Non lus réduits à de quoi dédoublonner : sert à compter ce que la liste
+     * affiche. Même ordre que les listes, car le dédoublonnage garde la
+     * première occurrence.
+     */
+    @Query("SELECT id, feedId, title, url FROM articles WHERE isRead = 0 ORDER BY publishedAt DESC")
+    fun observeNonLusCles(): Flow<List<ArticleCle>>
 
     @Query("SELECT COUNT(*) FROM articles WHERE isRead = 0")
     fun observeUnreadTotal(): Flow<Int>
@@ -202,9 +259,16 @@ interface ArticleDao {
     @Query("SELECT COUNT(*) FROM articles")
     suspend fun total(): Int
 
-    /** Titres des derniers articles non lus : aperçu de la notification. */
-    @Query("SELECT title FROM articles WHERE isRead = 0 ORDER BY publishedAt DESC LIMIT :limite")
-    suspend fun titresNonLus(limite: Int): List<String>
+    /** Articles non lus reçus (enregistrés) après [depuis] : ce qu'annonce la notification. */
+    @Query("SELECT COUNT(*) FROM articles WHERE isRead = 0 AND fetchedAt > :depuis")
+    suspend fun compterNonLusDepuis(depuis: Long): Int
+
+    /** Titres de ces articles, les derniers reçus d'abord : aperçu de la notification. */
+    @Query(
+        "SELECT title FROM articles WHERE isRead = 0 AND fetchedAt > :depuis " +
+            "ORDER BY fetchedAt DESC, publishedAt DESC LIMIT :limite",
+    )
+    suspend fun titresNonLusDepuis(depuis: Long, limite: Int): List<String>
 
     /** Purge d'archive : conserve les [keep] plus récents, jamais les favoris. */
     @Query(
@@ -212,6 +276,20 @@ interface ArticleDao {
             "(SELECT id FROM articles ORDER BY publishedAt DESC LIMIT :keep)",
     )
     suspend fun trim(keep: Int): Int
+
+    /** Articles que [trim] supprimerait pour la limite [keep] : aperçu avant de réduire l'archive. */
+    @Query(
+        "SELECT COUNT(*) FROM articles WHERE isStarred = 0 AND id NOT IN " +
+            "(SELECT id FROM articles ORDER BY publishedAt DESC LIMIT :keep)",
+    )
+    suspend fun compterPurge(keep: Int): Int
+
+    /** Parmi eux, ceux qui ne sont pas encore lus. */
+    @Query(
+        "SELECT COUNT(*) FROM articles WHERE isStarred = 0 AND isRead = 0 AND id NOT IN " +
+            "(SELECT id FROM articles ORDER BY publishedAt DESC LIMIT :keep)",
+    )
+    suspend fun compterPurgeNonLus(keep: Int): Int
 
     @Query("DELETE FROM articles WHERE feedId = :feedId AND isStarred = 0")
     suspend fun clearFeed(feedId: Long)

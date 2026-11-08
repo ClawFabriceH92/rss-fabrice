@@ -88,4 +88,46 @@ class EtatSourceTest {
         assertTrue(texte.contains("repos"))
         assertTrue(texte.contains("5 h") || texte.contains("300 min") || texte.contains("min"))
     }
+
+    @Test
+    fun `les erreurs purement reseau sont reconnues`() {
+        assertTrue(EtatSource.estErreurReseau(java.net.UnknownHostException("exemple.fr")))
+        assertTrue(EtatSource.estErreurReseau(java.net.ConnectException("refusée")))
+        assertTrue(EtatSource.estErreurReseau(java.net.SocketTimeoutException("délai")))
+        // Enveloppée par une autre couche : la cause est retrouvée.
+        assertTrue(
+            EtatSource.estErreurReseau(
+                java.io.IOException("échec", java.net.UnknownHostException("exemple.fr")),
+            ),
+        )
+    }
+
+    @Test
+    fun `les erreurs HTTP, de contenu ou de certificat restent des echecs de la source`() {
+        assertFalse(EtatSource.estErreurReseau(java.io.IOException("HTTP 500")))
+        assertFalse(EtatSource.estErreurReseau(java.io.IOException("réponse vide")))
+        assertFalse(EtatSource.estErreurReseau(javax.net.ssl.SSLHandshakeException("certificat")))
+        assertFalse(EtatSource.estErreurReseau(IllegalStateException("xml invalide")))
+    }
+
+    @Test
+    fun `une panne locale suppose que toutes les sources echouent sur le reseau`() {
+        val dns = java.net.UnknownHostException("a")
+        val delai = java.net.SocketTimeoutException("b")
+        val http = java.io.IOException("HTTP 404")
+
+        assertTrue(EtatSource.estPanneLocale(listOf(dns, delai, dns), 3))
+        // Une source a répondu : ce n'est pas une panne locale.
+        assertFalse(EtatSource.estPanneLocale(listOf(dns, delai), 3))
+        // Une erreur HTTP parmi les échecs : elle reste comptée.
+        assertFalse(EtatSource.estPanneLocale(listOf(dns, http, dns), 3))
+        assertFalse(EtatSource.estPanneLocale(emptyList(), 0))
+    }
+
+    @Test
+    fun `une source seule en delai depasse reste comptee`() {
+        // Avec une seule source, rien ne distingue une panne locale d'un site lent.
+        assertFalse(EtatSource.estPanneLocale(listOf(java.net.SocketTimeoutException("délai")), 1))
+        assertTrue(EtatSource.SEUIL_PANNE_LOCALE >= 2)
+    }
 }

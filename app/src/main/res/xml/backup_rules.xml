@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Sauvegarde automatique Android 6 à 11 (fullBackupContent).
+    Sauvegardés : la base (abonnements, articles, favoris) et les réglages.
+    Exclus : les fichiers volumineux ou reconstructibles (APK de mise à jour,
+    exports OPML temporaires). Le cache n'est jamais sauvegardé.
+-->
+<full-backup-content>
+    <include domain="database" path="." />
+    <include domain="file" path="datastore/" />
+    <exclude domain="file" path="updates/" />
+    <exclude domain="file" path="exports/" />
+</full-backup-content>

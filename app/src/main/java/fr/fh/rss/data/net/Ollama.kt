@@ -1,9 +1,14 @@
 package fr.fh.rss.data.net
 
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -31,10 +36,44 @@ class Ollama {
                 "principaux, chacun sur une ligne commençant par un tiret, en citant les thèmes " +
                 "communs. Pas d'introduction ni de conclusion."
 
+        /**
+         * Adresse utilisable par OkHttp : espaces retirés, http:// ajouté quand le
+         * schéma manque (« 192.168.0.162:11434 »), barre finale retirée. Vide : adresse par défaut.
+         */
         fun normaliser(base: String): String {
             val propre = base.trim().ifEmpty { ADRESSE_DEFAUT }
-            return propre.trimEnd('/')
+            val avecSchema = if (propre.contains("://")) propre else "http://$propre"
+            return avecSchema.trimEnd('/')
         }
+
+        /** Vrai si l'adresse normalisée est une adresse http(s) que OkHttp accepte. */
+        fun adresseValide(base: String): Boolean = normaliser(base).toHttpUrlOrNull() != null
+
+        /**
+         * Message actionnable pour une erreur d'appel à Ollama, à la place de la
+         * trace brute d'OkHttp (« failed to connect to /192.168.0.162… »).
+         */
+        fun messageErreur(base: String, erreur: Throwable): String {
+            val adresse = normaliser(base)
+            val hote = adresse.toHttpUrlOrNull()?.host
+            return when {
+                erreur is IllegalArgumentException || hote == null ->
+                    "Adresse Ollama invalide : « ${base.trim()} ». Exemple : 192.168.0.162:11434"
+                erreur is java.net.UnknownHostException ||
+                    erreur is java.net.ConnectException ||
+                    erreur is java.net.NoRouteToHostException ->
+                    "Ollama injoignable sur $hote : es-tu sur le Wi-Fi de la maison ?"
+                erreur is java.net.SocketTimeoutException && erreur.message.orEmpty().contains("connect", ignoreCase = true) ->
+                    "Ollama injoignable sur $hote : es-tu sur le Wi-Fi de la maison ?"
+                erreur is java.io.InterruptedIOException || erreur is java.net.SocketTimeoutException ->
+                    "Ollama met trop de temps à répondre sur $hote : le modèle charge peut-être, réessaie dans un instant."
+                else -> erreur.message?.takeIf { it.isNotBlank() } ?: "erreur inconnue (${erreur.javaClass.simpleName})"
+            }
+        }
+
+        /** Vrai si le texte d'état affiché est une erreur (tout sauf une connexion réussie). */
+        fun estEtatErreur(etat: String): Boolean =
+            !(etat.startsWith("Connecté") || etat.startsWith("Serveur joignable"))
     }
 
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -46,19 +85,19 @@ class Ollama {
     private val json = "application/json; charset=utf-8".toMediaType()
 
     /** Modèles installés sur le serveur, dans l'ordre renvoyé par Ollama. */
-    fun modeles(base: String): List<String> {
+    suspend fun modeles(base: String): List<String> {
         val url = normaliser(base) + "/api/tags"
         val requete = Request.Builder().url(url).get().build()
-        client.newCall(requete).execute().use { reponse ->
+        return executer(requete) { reponse ->
             val corps = reponse.body?.string()
             if (!reponse.isSuccessful) {
                 throw IOException("Ollama a répondu ${reponse.code}")
             }
             if (corps.isNullOrBlank()) throw IOException("réponse vide")
-            val modèles = JSONObject(corps).optJSONArray("models") ?: return emptyList()
-            return buildList {
-                for (i in 0 until modèles.length()) {
-                    val nom = modèles.optJSONObject(i)?.optString("name").orEmpty()
+            val modèles = JSONObject(corps).optJSONArray("models")
+            buildList {
+                for (i in 0 until (modèles?.length() ?: 0)) {
+                    val nom = modèles?.optJSONObject(i)?.optString("name").orEmpty()
                     if (nom.isNotBlank()) add(nom)
                 }
             }
@@ -66,11 +105,31 @@ class Ollama {
     }
 
     /**
+     * Exécute la requête sans bloquer : l'annulation de la coroutine annule
+     * l'appel réseau (bouton « Annuler » d'un résumé).
+     */
+    private suspend fun <T> executer(requete: Request, lire: (Response) -> T): T =
+        suspendCancellableCoroutine { suite ->
+            val appel = client.newCall(requete)
+            suite.invokeOnCancellation { appel.cancel() }
+            appel.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (suite.isActive) suite.resumeWith(Result.failure(e))
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    val resultat = runCatching { response.use(lire) }
+                    if (suite.isActive) suite.resumeWith(resultat)
+                }
+            })
+        }
+
+    /**
      * Envoie une consigne et un contenu, renvoie le texte du modèle.
      *
      * @throws IOException si le serveur ne répond pas ou renvoie une erreur.
      */
-    fun demander(
+    suspend fun demander(
         base: String,
         modele: String,
         consigne: String,
@@ -94,8 +153,11 @@ class Ollama {
             .url(normaliser(base) + "/api/chat")
             .post(charge.toString().toRequestBody(json))
             .build()
-        client.newCall(requete).execute().use { reponse ->
+        return executer(requete) { reponse ->
             val corps = reponse.body?.string()
+            if (reponse.code == 404) {
+                throw IOException("modèle « ${modele.ifBlank { MODELE_DEFAUT }} » introuvable sur le serveur Ollama")
+            }
             if (!reponse.isSuccessful) {
                 throw IOException("Ollama a répondu ${reponse.code}")
             }
@@ -106,7 +168,7 @@ class Ollama {
                 .orEmpty()
                 .trim()
             if (texte.isEmpty()) throw IOException("réponse sans texte")
-            return texte
+            texte
         }
     }
 }

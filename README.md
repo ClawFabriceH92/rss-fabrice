@@ -23,10 +23,15 @@ Lot MVP du cahier des charges (oct. 2026).
 - **Collecte à chaque lancement**, actualisation manuelle (tirer pour
   actualiser ou bouton), et **collecte périodique optionnelle** de 15 min à
   24 h (WorkManager, Wi-Fi uniquement possible, batterie faible exclue).
-- **Recherche plein texte** (SQLite FTS4) sur les titres et le texte des
-  articles.
+- **Recherche plein texte** (SQLite FTS4, tokenizer unicode61) sur les titres et
+  le texte des articles : accents et majuscules repliés (« economie » trouve
+  « Économie »), dernier mot en préfixe (« inflat » trouve « inflation »).
 - **Lecture hors connexion** : le texte intégral est conservé localement, avec
-  plafond d'archive réglable (5 000 à 100 000 articles).
+  plafond d'archive réglable (5 000 à 100 000 articles). Un favori télécharge son
+  texte complet dès que le réseau est là (et à chaque collecte pour les favoris
+  encore courts) ; le texte du flux n'est remplacé que par un texte nettement plus
+  long (400 caractères minimum), et « Texte complet indisponible » s'affiche dans
+  le lecteur quand le téléchargement échoue.
 - Requêtes conditionnelles (`ETag`, `If-Modified-Since`) et User-Agent
   identifiable, comme demandé dans les exigences non fonctionnelles.
 - **Mise à jour intégrée** : l'application lit la release GitHub `latest`
@@ -103,10 +108,12 @@ le tiroir.
   puis retour à l'accueil ; la source et ses articles déjà téléchargés sont
   retirés de l'app (le site du flux n'est pas touché).
 - **Doublons masqués** : un même article publié par plusieurs sources
-  n'apparaît qu'une fois dans la liste (même adresse après nettoyage des
+  n'apparaît qu'une fois dans la liste (même adresse précise après nettoyage des
   paramètres de traçage, ou même titre significatif d'au moins 20 caractères,
-  préfixes `AFP`, `DIRECT :` ignorés). `Regroupement.dedoublonner` est testé sur
-  JVM ; l'onglet IA garde la liste brute pour afficher qui a publié quoi.
+  préfixes `AFP`, `DIRECT :` ignorés), seulement entre sources différentes.
+  Lire ou balayer l'article affiché marque lus ses doublons masqués, et les
+  compteurs de non lus (total, dossiers) comptent ce que la liste affiche.
+  `Regroupement.dedoublonner` est testé sur JVM ; l'onglet IA garde la liste brute pour afficher qui a publié quoi.
 - **Couleurs de lecture** : fond orange clair pour un article non lu, vert clair
   une fois lu (teintes adaptées au thème sombre), en liste comme en cartes.
 - **Bascule Tous / Non lus** en haut de la liste, avec le compteur de non lus.
@@ -124,6 +131,28 @@ le tiroir.
 - **Charger plus** : la liste ne demandait que 500 articles à la base ; un
   bouton charge 500 de plus (plafond 5 000), remis à zéro à chaque changement
   de filtre ou de recherche.
+
+## Accessibilité, ouverture de liens et sauvegarde
+
+- **Cartes** : l'étoile annonce son action (« Ajouter à Lire plus tard » /
+  « Retirer de Lire plus tard »), chaque carte annonce « Lu » ou « Non lu » et
+  propose les actions TalkBack « Marquer comme lu / non lu » et favori (le
+  balayage n'est plus le seul geste). Cibles tactiles de 48 dp. Le bandeau de
+  collecte est une région vive annoncée par TalkBack.
+- **Taille du texte du lecteur** : suit l'échelle de police du système, avec un
+  réglage A- / A+ (70 à 200 %) dans Réglages > Affichage.
+- **Liens ouverts avec l'application** : elle ne se propose plus pour n'importe
+  quel lien web. Elle répond aux réponses typées flux ou OPML (RSS, Atom, RDF,
+  XML), aux adresses finissant par `.rss`, `.atom` ou `.xml`, et aux schémas
+  `feed://` et `rss://`. Pour s'abonner à un site ordinaire, le partager vers
+  l'application (menu Partager du navigateur).
+- **Sauvegarde Android** : la base et les réglages sont repris par la
+  sauvegarde automatique et le transfert d'appareil (`backup_rules.xml`,
+  `data_extraction_rules.xml`) ; les APK de mise à jour et les exports OPML
+  temporaires sont exclus. La sauvegarde cloud est limitée à environ 25 Mo : au-delà,
+  le système la saute. L'export OPML reste la sauvegarde des abonnements.
+- Les exports OPML temporaires (`files/exports`) sont purgés : les deux plus
+  récents seulement sont conservés.
 
 ## Signature et mise à jour
 

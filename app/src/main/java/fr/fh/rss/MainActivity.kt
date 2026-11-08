@@ -11,11 +11,17 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.lifecycleScope
+import fr.fh.rss.data.ExportsOpml
 import fr.fh.rss.ui.AppRoot
 import fr.fh.rss.ui.MainViewModel
 import fr.fh.rss.ui.theme.RssTheme
 import fr.fh.rss.update.UpdateManager
 import fr.fh.rss.work.Notifications
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -27,8 +33,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        lienEntrant.value = lienDepuisIntent(intent)
+        // Intent d'origine relu seulement au premier lancement : après une rotation,
+        // il serait rejoué (nouvelle tentative d'abonnement au lien partagé).
+        if (savedInstanceState == null) {
+            lienEntrant.value = lienDepuisIntent(intent)
+        }
         Notifications.creerCanal(this)
+        // Purge des anciens exports OPML, hors du thread principal.
+        val dossierExports = java.io.File(filesDir, "exports")
+        lifecycleScope.launch(Dispatchers.IO) { runCatching { ExportsOpml.purger(dossierExports) } }
         // Contrôle de mise à jour au lancement (le plancher horaire reste géré par le manager).
         UpdateManager.checkAtLaunch(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -47,6 +60,25 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        marquerVu()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Ce qui est arrivé pendant que l'application était ouverte a été vu.
+        marquerVu()
+    }
+
+    /** Retire la notification et avance le repère : les articles reçus jusqu'ici sont vus. */
+    private fun marquerVu() {
+        Notifications.annuler(this)
+        val parametres = (application as RssApp).container.settings
+        // Portée propre : à onStop, celle de l'activité peut disparaître avant l'écriture.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { runCatching { parametres.setDerniereNotifAt(System.currentTimeMillis()) } }
     }
 
     override fun onNewIntent(intent: Intent) {

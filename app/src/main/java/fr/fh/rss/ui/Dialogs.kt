@@ -206,3 +206,49 @@ fun DialogueMiseAJour(
         UpdateManager.State.Idle -> Unit
     }
 }
+
+/**
+ * Confirmation unique de suppression de sources, commune à tous les chemins
+ * (tiroir, onglet « Flux en erreur », lecteur). Elle annonce combien de
+ * favoris restent dans l'application.
+ */
+@Composable
+fun DialogueSuppressionSources(
+    titre: String?,
+    nombre: Int,
+    favoris: Int,
+    onConfirmer: () -> Unit,
+    onFermer: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onFermer,
+        title = { Text(if (nombre > 1) "Supprimer $nombre sources ?" else "Supprimer la source ?") },
+        text = { Text(fr.fh.rss.data.Avertissements.suppressionSources(titre, nombre, favoris)) },
+        confirmButton = {
+            TextButton(onClick = onConfirmer) {
+                Text("Supprimer", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onFermer) { Text("Annuler") } },
+    )
+}
+
+/** Confirmation avant de réduire l'archive sous le nombre d'articles actuel. */
+@Composable
+fun DialogueReductionArchive(
+    apercu: fr.fh.rss.data.ApercuArchive,
+    onConfirmer: () -> Unit,
+    onFermer: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onFermer,
+        title = { Text("Réduire l'archive ?") },
+        text = { Text(apercu.message()) },
+        confirmButton = {
+            TextButton(onClick = onConfirmer) {
+                Text("Réduire", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onFermer) { Text("Annuler") } },
+    )
+}

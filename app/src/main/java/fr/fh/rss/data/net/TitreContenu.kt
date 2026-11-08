@@ -2,6 +2,11 @@ package fr.fh.rss.data.net
 
 import org.jsoup.Jsoup
 
+// Compilées une seule fois, pas à chaque comparaison de titres.
+private val ACCENTS_COMBINANTS = Regex("\\p{Mn}+")
+private val NON_ALPHANUMERIQUE = Regex("[^\\p{L}\\p{N}]+")
+private val ESPACES = Regex("\\s+")
+
 /**
  * Nettoyage du contenu d'un article avant affichage dans le lecteur.
  *
@@ -70,11 +75,11 @@ object TitreContenu {
     internal fun normaliser(texte: String): String {
         val sansAccents = java.text.Normalizer
             .normalize(texte.replace('\u00a0', ' '), java.text.Normalizer.Form.NFD)
-            .replace(Regex("\\p{Mn}+"), "")
+            .replace(ACCENTS_COMBINANTS, "")
         return sansAccents
             .lowercase()
-            .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+            .replace(NON_ALPHANUMERIQUE, " ")
             .trim()
-            .replace(Regex("\\s+"), " ")
+            .replace(ESPACES, " ")
     }
 }

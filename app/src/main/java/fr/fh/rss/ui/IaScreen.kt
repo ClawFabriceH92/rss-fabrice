@@ -54,6 +54,7 @@ fun EcranIa(
     resumeEnCours: Long?,
     onOuvrir: (ArticleLigne) -> Unit,
     onResumer: (ArticleLigne) -> Unit,
+    onAnnulerResume: () -> Unit = {},
     onSynthese: () -> Unit,
     onEffacerSynthese: () -> Unit,
     onReglagesIa: () -> Unit,
@@ -86,7 +87,7 @@ fun EcranIa(
                     Text(
                         etatOllama,
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (etatOllama.startsWith("Injoignable")) {
+                        color = if (fr.fh.rss.data.net.Ollama.estEtatErreur(etatOllama)) {
                             MaterialTheme.colorScheme.error
                         } else {
                             VertIa
@@ -245,7 +246,7 @@ fun EcranIa(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            titres[groupe.article.feedId].orEmpty() + "  ·  " +
+                            nomSource(titres, groupe.article.feedId) + "  ·  " +
                                 dateCourte(groupe.article.publishedAt),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -254,6 +255,7 @@ fun EcranIa(
                     }
                     if (resumeEnCours == groupe.article.id) {
                         CircularProgressIndicator(Modifier.height(16.dp), strokeWidth = 2.dp)
+                        TextButton(onClick = onAnnulerResume) { Text("Annuler") }
                     } else if (resumes.containsKey(groupe.article.id)) {
                         Text(
                             "résumé",

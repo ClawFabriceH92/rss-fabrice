@@ -174,9 +174,28 @@ class FeedRepository(
         return finale.takeIf { http && it != actuelle }
     }
 
+    /**
+     * Le site répond une page HTML à l'adresse du flux (site migré, page de
+     * connexion, réorganisation) : on cherche le flux que la page déclare, puis
+     * les adresses habituelles. Renvoie l'adresse et la réponse du flux
+     * retrouvé, ou null si la page n'en désigne aucun.
+     */
+    private suspend fun retrouverFlux(url: String, pageHtml: String): Pair<String, Http.Reponse>? {
+        val candidats = (FeedDiscovery.fromHtml(pageHtml, url) + FeedDiscovery.candidates(url))
+            .distinct()
+            .filter { it != url }
+        for (candidat in candidats) {
+            val essai = runCatching { http.get(candidat) }.getOrNull() ?: continue
+            val corps = essai.body ?: continue
+            if (!essai.ok || !FeedDiscovery.looksLikeFeed(corps)) continue
+            return candidat to essai
+        }
+        return null
+    }
+
     /** Collecte d'une source. Renvoie le nombre de nouveaux articles. */
     suspend fun refreshFeed(feed: FeedEntity): Int = withContext(Dispatchers.IO) {
-        val reponse = http.get(feed.url, feed.etag, feed.lastModified)
+        var reponse = http.get(feed.url, feed.etag, feed.lastModified)
         if (reponse.notModified) {
             feedDao.marquerSucces(feed.id, feed.etag, feed.lastModified, System.currentTimeMillis())
             return@withContext 0
@@ -184,16 +203,27 @@ class FeedRepository(
         if (!reponse.ok) {
             throw IOException("HTTP ${reponse.code}")
         }
-        val corps = reponse.body ?: throw IOException("réponse vide")
+        var corps = reponse.body ?: throw IOException("réponse vide")
+        var urlFlux = feed.url
+
         // Une page HTML (connexion, site migré) répond 200 mais n'est pas un flux :
-        // sans ce garde-fou la collecte « réussirait » à vide, à jamais.
+        // sans ce garde-fou la collecte « réussirait » à vide, à jamais. Avant de
+        // déclarer la source en erreur, on cherche le flux que la page désigne :
+        // la source se répare alors toute seule (demande Fabrice 09/11/2026).
         if (!FeedDiscovery.looksLikeFeed(corps)) {
-            throw IOException("ce n'est plus un flux (la page répond du HTML)")
+            val retrouve = retrouverFlux(feed.url, corps)
+                ?: throw IOException("ce n'est plus un flux (la page répond du HTML)")
+            urlFlux = retrouve.first
+            reponse = retrouve.second
+            corps = reponse.body.orEmpty()
         }
-        val flux = FeedParser.parse(feed.url, corps)
-        // Redirection permanente : on retient la nouvelle adresse pour les prochaines collectes.
-        adresseApresRedirection(feed.url, reponse)?.let { nouvelle ->
-            if (feedDao.byUrl(nouvelle) == null) feedDao.updateUrl(feed.id, nouvelle)
+        val flux = FeedParser.parse(urlFlux, corps)
+
+        // Redirection permanente, ou flux retrouvé depuis une page HTML : on retient
+        // l'adresse qui donne réellement un flux pour les prochaines collectes.
+        val nouvelle = if (urlFlux != feed.url) urlFlux else adresseApresRedirection(feed.url, reponse)
+        nouvelle?.let { adresse ->
+            if (feedDao.byUrl(adresse) == null) feedDao.updateUrl(feed.id, adresse)
         }
 
         var nouveaux = 0
@@ -228,7 +258,7 @@ class FeedRepository(
      * lisible même quand les animations système sont désactivées.
      */
     suspend fun refreshAll(
-        paralleles: Int = 4,
+        paralleles: Int = 8,
         ignorerRepos: Boolean = false,
         onProgres: (faits: Int, total: Int) -> Unit = { _, _ -> },
     ): RefreshSummary = coroutineScope {

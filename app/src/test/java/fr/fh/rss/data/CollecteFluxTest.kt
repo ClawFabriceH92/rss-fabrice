@@ -57,7 +57,38 @@ class CollecteFluxTest {
         override fun get(url: String, etag: String?, lastModified: String?) = reponse
     }
 
+    /** Réponses par adresse : sert à vérifier la réparation d'une source dont la page a changé. */
+    private class HttpParUrl(private val reponses: Map<String, Http.Reponse>) : Http("test") {
+        override fun get(url: String, etag: String?, lastModified: String?): Http.Reponse =
+            reponses[url] ?: Http.Reponse(404, null, null, null, url)
+    }
+
     private class Depot(val depot: FeedRepository, val feeds: Notes, val articles: Notes)
+
+    private fun depotAvec(http: Http, urlDejaPrise: Boolean = false): Depot {
+        val feeds = Notes()
+        val articles = Notes()
+        val feedDao = simule(
+            FeedDao::class.java,
+            feeds,
+            mapOf(
+                "all" to listOf(source),
+                "byUrl" to if (urlDejaPrise) source.copy(id = 2) else null,
+            ),
+        )
+        val articleDao = simule(ArticleDao::class.java, articles, mapOf("guids" to emptyList<String>(), "insert" to 1L))
+        val folderDao = simule(FolderDao::class.java, Notes())
+        return Depot(
+            FeedRepository(
+                folderDao = folderDao,
+                feedDao = feedDao,
+                articleDao = articleDao,
+                http = http,
+            ),
+            feeds,
+            articles,
+        )
+    }
 
     private fun depot(reponse: Http.Reponse, urlDejaPrise: Boolean = false): Depot {
         val feeds = Notes()
@@ -98,6 +129,31 @@ class CollecteFluxTest {
         assertTrue(bilan.echecs.single().second, bilan.echecs.single().second.contains("n'est plus un flux"))
         // Le détail est mémorisé : la source apparaît dans « Flux en erreur ».
         assertTrue((d.feeds.argumentsDe("marquerEchec").single()[2] as String).contains("flux"))
+    }
+
+    @Test
+    fun `une page HTML qui declare un flux repare la source toute seule`() = runBlocking {
+        val page = "<!doctype html><html><head><link rel=\"alternate\" type=\"application/rss+xml\" " +
+            "href=\"/nouveau.rss\"></head><body>Le site a ete refait</body></html>"
+        val http = HttpParUrl(
+            mapOf(
+                source.url to Http.Reponse(200, page, null, null, source.url),
+                "https://exemple.fr/nouveau.rss" to
+                    Http.Reponse(200, flux, null, null, "https://exemple.fr/nouveau.rss"),
+            ),
+        )
+        val d = depotAvec(http)
+
+        val bilan = d.depot.refreshAll()
+
+        assertEquals(bilan.echecs.toString(), 0, bilan.echecs.size)
+        assertEquals(1, d.feeds.nombre("marquerSucces"))
+        assertEquals(0, d.feeds.nombre("marquerEchec"))
+        assertEquals(
+            listOf<Any?>(1L, "https://exemple.fr/nouveau.rss"),
+            d.feeds.argumentsDe("updateUrl").single(),
+        )
+        assertEquals(1, bilan.nouveaux)
     }
 
     @Test

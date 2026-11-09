@@ -82,6 +82,8 @@ fun EcranReglages(
     val suggestions by vm.suggestions.collectAsState()
     val suggestionsEnCours by vm.suggestionsEnCours.collectAsState()
     val suggestionsErreur by vm.suggestionsErreur.collectAsState()
+    val catalogueSources by vm.catalogueSources.collectAsState()
+    val themeCatalogue by vm.themeCatalogue.collectAsState()
     // Réduction d'archive en attente de confirmation.
     var reductionEnAttente by remember { androidx.compose.runtime.mutableStateOf<ApercuArchive?>(null) }
     var urlSaisie by remember(reglages.ollamaUrl) {
@@ -139,11 +141,26 @@ fun EcranReglages(
         if (onglet == 2) {
             Column(Modifier.fillMaxWidth().weight(1f)) {
                 EcranSuggestions(
+                    catalogue = catalogueSources,
+                    themes = vm.themesCatalogue,
+                    theme = themeCatalogue,
+                    onTheme = { vm.setThemeCatalogue(it) },
                     propositions = suggestions,
                     enCours = suggestionsEnCours,
                     erreur = suggestionsErreur,
                     modele = reglages.ollamaModele,
-                    onDemander = { vm.suggererSources() },
+                    onAjouterEntree = { entree ->
+                        vm.ajouterSuggestion(
+                            fr.fh.rss.data.net.SuggestionsSources.Proposition(
+                                nom = entree.nom,
+                                url = entree.url,
+                                etat = fr.fh.rss.data.net.SuggestionsSources.Etat.PROPOSE,
+                                detail = "catalogue · ${entree.theme}",
+                            ),
+                        )
+                    },
+                    onChoisirDansCatalogue = { vm.choisirDansCatalogue() },
+                    onChercherAilleurs = { vm.suggererSources() },
                     onAjouter = { vm.ajouterSuggestion(it) },
                     onAjouterTout = { liste -> liste.forEach { vm.ajouterSuggestion(it) } },
                     onEffacer = { vm.effacerSuggestions() },

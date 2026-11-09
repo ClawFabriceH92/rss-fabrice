@@ -209,6 +209,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _suggestionsErreur = MutableStateFlow<String?>(null)
     val suggestionsErreur: StateFlow<String?> = _suggestionsErreur.asStateFlow()
 
+    private val _themeCatalogue = MutableStateFlow(fr.fh.rss.data.net.CatalogueSources.THEMES.first())
+
+    /** Sources du catalogue pour le thème courant, moins celles déjà suivies. */
+    val catalogueSources: StateFlow<List<fr.fh.rss.data.net.CatalogueSources.Entree>> =
+        combine(sources, _themeCatalogue) { feeds, theme ->
+            fr.fh.rss.data.net.CatalogueSources.nonSuivies(feeds.map { it.url }, theme)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val themesCatalogue: List<String> = fr.fh.rss.data.net.CatalogueSources.THEMES
+    val themeCatalogue: StateFlow<String> = _themeCatalogue.asStateFlow()
+
     private var collecteFaite = false
 
     // ------------------------------------------------------------ actions
@@ -352,6 +363,62 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     fr.fh.rss.data.net.SuggestionsSources.cle(proposition.url)
             }
             if (_selection.value.filtre !in VUES_D_ENSEMBLE) _selection.value = SELECTION_PAR_DEFAUT
+        }
+    }
+
+    fun setThemeCatalogue(theme: String) {
+        if (theme in themesCatalogue) _themeCatalogue.value = theme
+    }
+
+    /**
+     * Le modèle choisit dans le catalogue embarqué : les adresses sont déjà
+     * vérifiées, il ne peut donc rien inventer. Il ne renvoie que des numéros,
+     * que l'application traduit en sources.
+     */
+    fun choisirDansCatalogue() {
+        if (_suggestionsEnCours.value) return
+        viewModelScope.launch {
+            _suggestionsEnCours.value = true
+            _suggestionsErreur.value = null
+            val courant = reglages.value
+            val suivies = sources.value
+            val candidats = fr.fh.rss.data.net.CatalogueSources.nonSuivies(suivies.map { it.url })
+            if (candidats.isEmpty()) {
+                _suggestionsErreur.value = "Toutes les sources du catalogue sont déjà suivies."
+                _suggestionsEnCours.value = false
+                return@launch
+            }
+            runCatching {
+                val reponse = ollama.demander(
+                    base = courant.ollamaUrl,
+                    modele = courant.ollamaModele,
+                    consigne = fr.fh.rss.data.net.CatalogueSources.consigne(candidats),
+                    contenu = fr.fh.rss.data.net.SuggestionsSources.contenu(
+                        suivies.map { it.title to it.url },
+                    ),
+                    nombreTokens = 300,
+                )
+                var choix = fr.fh.rss.data.net.CatalogueSources.depuisNumeros(reponse, candidats)
+                if (choix.isEmpty()) {
+                    choix = fr.fh.rss.data.net.CatalogueSources.depuisNoms(reponse, candidats)
+                }
+                _suggestions.value = choix.map {
+                    fr.fh.rss.data.net.SuggestionsSources.Proposition(
+                        nom = it.nom,
+                        url = it.url,
+                        etat = fr.fh.rss.data.net.SuggestionsSources.Etat.PROPOSE,
+                        detail = "catalogue · ${it.theme}",
+                    )
+                }
+                if (choix.isEmpty()) {
+                    _suggestionsErreur.value =
+                        "Le modèle n'a rien retenu du catalogue. Réessaie ou change de modèle."
+                }
+            }.onFailure { erreur ->
+                _suggestionsErreur.value = fr.fh.rss.data.net.Ollama.messageErreur(courant.ollamaUrl, erreur)
+                _iaDisponible.value = false
+            }
+            _suggestionsEnCours.value = false
         }
     }
 

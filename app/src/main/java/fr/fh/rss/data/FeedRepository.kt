@@ -15,6 +15,7 @@ import fr.fh.rss.data.net.FeedDiscovery
 import fr.fh.rss.data.net.FeedParser
 import fr.fh.rss.data.net.Http
 import fr.fh.rss.data.net.ReaderExtractor
+import fr.fh.rss.data.net.SuggestionsSources
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -356,6 +357,106 @@ class FeedRepository(
             .sortedBy { it.errorSince ?: Long.MAX_VALUE }
     }
 
+    // ------------------------------------------------- suggestions de sources
+
+    /**
+     * Vérifie des adresses proposées par le modèle local : répondent-elles
+     * vraiment un flux ? Rien n'est enregistré ici, l'utilisateur choisit
+     * ensuite. Les adresses déjà suivies sont écartées avant tout appel réseau.
+     */
+    suspend fun verifierPropositions(
+        candidates: List<Pair<String, String>>,
+    ): List<SuggestionsSources.Proposition> = withContext(Dispatchers.IO) {
+        val suivies = feedDao.all().map { it.url }
+        val aTester = SuggestionsSources.aTester(candidates, suivies)
+        if (aTester.isEmpty()) return@withContext emptyList()
+        val permis = Semaphore(4)
+        coroutineScope {
+            aTester.map { (nom, url) ->
+                async(Dispatchers.IO) { permis.withPermit { verifierUneProposition(nom, url) } }
+            }.awaitAll()
+        }.sortedBy { if (it.retenue) 0 else 1 }
+    }
+
+    /**
+     * Vérifie une proposition : le modèle donne le plus souvent l'adresse d'un
+     * site, parfois celle d'un flux. Les deux sont acceptées, et quand c'est une
+     * page on cherche son flux comme le fait l'ajout manuel.
+     */
+    private suspend fun verifierUneProposition(
+        nom: String,
+        url: String,
+    ): SuggestionsSources.Proposition {
+        val normalisee = FeedDiscovery.normalizeUrl(url)
+        if (normalisee.isBlank()) {
+            return SuggestionsSources.Proposition(nom, url, SuggestionsSources.Etat.SANS_FLUX, detail = "adresse vide")
+        }
+        val reponse = runCatching { http.get(normalisee) }.getOrNull()
+            ?: return SuggestionsSources.Proposition(
+                nom, normalisee, SuggestionsSources.Etat.SANS_FLUX, detail = "injoignable",
+            )
+        if (!reponse.ok) {
+            return SuggestionsSources.Proposition(
+                nom, normalisee, SuggestionsSources.Etat.SANS_FLUX, detail = "HTTP ${reponse.code}",
+            )
+        }
+        val corps = reponse.body.orEmpty()
+
+        if (FeedDiscovery.looksLikeFeed(corps)) {
+            return propositionDepuisFlux(normalisee, corps, nom)
+        }
+        // C'est une page : on cherche le flux qu'elle déclare, puis les adresses habituelles.
+        return decouvrirFlux(normalisee, corps, reponse.urlFinale, nom)
+            ?: SuggestionsSources.Proposition(
+                nom, normalisee, SuggestionsSources.Etat.SANS_FLUX,
+                detail = "aucun flux trouvé sur ce site",
+            )
+    }
+
+    private fun propositionDepuisFlux(
+        url: String,
+        corps: String,
+        nom: String,
+    ): SuggestionsSources.Proposition {
+        val flux = runCatching { FeedParser.parse(url, corps) }.getOrNull()
+            ?: return SuggestionsSources.Proposition(
+                nom, url, SuggestionsSources.Etat.SANS_FLUX, detail = "flux illisible",
+            )
+        if (flux.items.isEmpty()) {
+            return SuggestionsSources.Proposition(
+                nom, url, SuggestionsSources.Etat.SANS_FLUX, detail = "flux sans article",
+            )
+        }
+        return SuggestionsSources.Proposition(
+            nom = flux.title.ifBlank { nom },
+            url = url,
+            etat = SuggestionsSources.Etat.PROPOSE,
+            articles = flux.items.size,
+        )
+    }
+
+    /** Flux d'un site : liens `<link rel=alternate>` de la page, puis adresses habituelles. */
+    private suspend fun decouvrirFlux(
+        page: String,
+        corpsPage: String,
+        urlFinale: String?,
+        nom: String,
+    ): SuggestionsSources.Proposition? {
+        val base = urlFinale?.takeIf { it.startsWith("http") } ?: page
+        val candidats = buildList {
+            addAll(FeedDiscovery.fromHtml(corpsPage, base))
+            addAll(FeedDiscovery.candidates(base))
+        }.distinct().filter { it != page }
+        for (candidat in candidats.take(10)) {
+            val essai = runCatching { http.get(candidat) }.getOrNull() ?: continue
+            val corps = essai.body ?: continue
+            if (!essai.ok || !FeedDiscovery.looksLikeFeed(corps)) continue
+            val proposition = propositionDepuisFlux(candidat, corps, nom)
+            if (proposition.retenue) return proposition
+        }
+        return null
+    }
+
     // --------------------------------------------------------------- OPML
 
     /**
@@ -648,6 +749,9 @@ class FeedRepository(
     suspend fun compteurs(): Pair<Int, Int> = feedDao.count() to articleDao.total()
 
     suspend fun echeancesParSource(): List<FeedEntity> = feedDao.all()
+
+    /** Toutes les sources en base, pour les fonctions qui ont besoin de la liste complète. */
+    suspend fun toutesLesSources(): List<FeedEntity> = feedDao.all()
 
     fun userAgent(): String = "RSSbyFabriceHeuvrard/${BuildConfig.VERSION_NAME} (Android)"
 }

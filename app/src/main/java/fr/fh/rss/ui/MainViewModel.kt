@@ -199,6 +199,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _iaDisponible = MutableStateFlow<Boolean?>(null)
     val iaDisponible: StateFlow<Boolean?> = _iaDisponible.asStateFlow()
 
+    // ------------------------------------------- suggestions de sources (IA)
+    private val _suggestions = MutableStateFlow<List<fr.fh.rss.data.net.SuggestionsSources.Proposition>>(emptyList())
+    val suggestions: StateFlow<List<fr.fh.rss.data.net.SuggestionsSources.Proposition>> = _suggestions.asStateFlow()
+
+    private val _suggestionsEnCours = MutableStateFlow(false)
+    val suggestionsEnCours: StateFlow<Boolean> = _suggestionsEnCours.asStateFlow()
+
+    private val _suggestionsErreur = MutableStateFlow<String?>(null)
+    val suggestionsErreur: StateFlow<String?> = _suggestionsErreur.asStateFlow()
+
     private var collecteFaite = false
 
     // ------------------------------------------------------------ actions
@@ -289,6 +299,65 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _selection.value = SELECTION_PAR_DEFAUT
             }
         }
+    }
+
+    /**
+     * Demande des idées de sources au modèle local, puis vérifie chaque adresse
+     * par le réseau : un modèle cite volontiers des flux qui n'existent pas, et
+     * seules les adresses qui répondent vraiment un flux sont proposées à
+     * l'ajout. Rien n'est abonné sans un appui de l'utilisateur.
+     */
+    fun suggererSources() {
+        if (_suggestionsEnCours.value) return
+        viewModelScope.launch {
+            _suggestionsEnCours.value = true
+            _suggestionsErreur.value = null
+            val courant = reglages.value
+            runCatching {
+                val existantes = depot.toutesLesSources().map { it.title to it.url }
+                val reponse = ollama.demander(
+                    base = courant.ollamaUrl,
+                    modele = courant.ollamaModele,
+                    consigne = fr.fh.rss.data.net.SuggestionsSources.consigne(),
+                    contenu = fr.fh.rss.data.net.SuggestionsSources.contenu(existantes),
+                    nombreTokens = 900,
+                )
+                val candidates = fr.fh.rss.data.net.SuggestionsSources.extraire(reponse)
+                if (candidates.isEmpty()) {
+                    _suggestionsErreur.value =
+                        "Le modèle n'a cité aucune adresse. Réessaie ou change de modèle dans les réglages."
+                    _suggestions.value = emptyList()
+                } else {
+                    _suggestions.value = depot.verifierPropositions(candidates)
+                }
+            }.onFailure { erreur ->
+                _suggestionsErreur.value = fr.fh.rss.data.net.Ollama.messageErreur(courant.ollamaUrl, erreur)
+                _iaDisponible.value = false
+            }
+            _suggestionsEnCours.value = false
+        }
+    }
+
+    /** Abonne une proposition vérifiée, puis la retire de la liste. */
+    fun ajouterSuggestion(proposition: fr.fh.rss.data.net.SuggestionsSources.Proposition) {
+        viewModelScope.launch {
+            val resultat = depot.addFeed(proposition.url, null)
+            _message.value = when (resultat) {
+                is AddResult.Added -> "« ${resultat.title} » ajouté (${resultat.count} article(s))."
+                is AddResult.Already -> "« ${resultat.title} » est déjà dans vos sources."
+                is AddResult.Failed -> "Ajout impossible : ${resultat.message}"
+            }
+            _suggestions.value = _suggestions.value.filterNot {
+                fr.fh.rss.data.net.SuggestionsSources.cle(it.url) ==
+                    fr.fh.rss.data.net.SuggestionsSources.cle(proposition.url)
+            }
+            if (_selection.value.filtre !in VUES_D_ENSEMBLE) _selection.value = SELECTION_PAR_DEFAUT
+        }
+    }
+
+    fun effacerSuggestions() {
+        _suggestions.value = emptyList()
+        _suggestionsErreur.value = null
     }
 
     fun creerDossier(nom: String) {

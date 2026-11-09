@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -76,6 +77,11 @@ fun EcranReglages(
 ) {
     val contexte = LocalContext.current
     val portee = androidx.compose.runtime.rememberCoroutineScope()
+    // Suggestions de sources : les états vivent dans le ViewModel, l'écran ne
+    // fait que les afficher (une demande survit à une rotation).
+    val suggestions by vm.suggestions.collectAsState()
+    val suggestionsEnCours by vm.suggestionsEnCours.collectAsState()
+    val suggestionsErreur by vm.suggestionsErreur.collectAsState()
     // Réduction d'archive en attente de confirmation.
     var reductionEnAttente by remember { androidx.compose.runtime.mutableStateOf<ApercuArchive?>(null) }
     var urlSaisie by remember(reglages.ollamaUrl) {
@@ -110,6 +116,11 @@ fun EcranReglages(
                     )
                 },
             )
+            Tab(
+                selected = onglet == 2,
+                onClick = { onOnglet(2) },
+                text = { Text("Suggestions", maxLines = 1) },
+            )
         }
 
         if (onglet == 1) {
@@ -120,6 +131,22 @@ fun EcranReglages(
                     onReessayerTout = { ids -> vm.reessayerToutesLesSources(ids) },
                     onSupprimer = { onDemanderSuppression(listOf(it)) },
                     onSupprimerTout = { ids -> onDemanderSuppression(ids) },
+                )
+            }
+            return@Column
+        }
+
+        if (onglet == 2) {
+            Column(Modifier.fillMaxWidth().weight(1f)) {
+                EcranSuggestions(
+                    propositions = suggestions,
+                    enCours = suggestionsEnCours,
+                    erreur = suggestionsErreur,
+                    modele = reglages.ollamaModele,
+                    onDemander = { vm.suggererSources() },
+                    onAjouter = { vm.ajouterSuggestion(it) },
+                    onAjouterTout = { liste -> liste.forEach { vm.ajouterSuggestion(it) } },
+                    onEffacer = { vm.effacerSuggestions() },
                 )
             }
             return@Column

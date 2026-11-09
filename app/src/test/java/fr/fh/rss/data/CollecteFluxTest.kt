@@ -6,6 +6,7 @@ import fr.fh.rss.data.db.FeedEntity
 import fr.fh.rss.data.db.FolderDao
 import fr.fh.rss.data.net.FeedDiscovery
 import fr.fh.rss.data.net.Http
+import fr.fh.rss.data.net.SuggestionsSources
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -154,6 +155,37 @@ class CollecteFluxTest {
             d.feeds.argumentsDe("updateUrl").single(),
         )
         assertEquals(1, bilan.nouveaux)
+    }
+
+    @Test
+    fun `les propositions de sources sont verifiees avant d'etre proposees`() = runBlocking {
+        val http = HttpParUrl(
+            mapOf(
+                "https://exemple.fr/nouveau.rss" to
+                    Http.Reponse(200, flux, null, null, "https://exemple.fr/nouveau.rss"),
+                "https://exemple.fr/page" to
+                    Http.Reponse(200, pageHtml, null, null, "https://exemple.fr/page"),
+            ),
+        )
+        val d = depotAvec(http)
+
+        val propositions = d.depot.verifierPropositions(
+            listOf(
+                "Nouveau" to "https://exemple.fr/nouveau.rss",
+                "Page" to "https://exemple.fr/page",
+                "Absent" to "https://exemple.fr/absent.xml",
+                "Deja suivie" to source.url,
+            ),
+        )
+
+        // La source deja suivie n'est meme pas interrogee : elle sort de la liste.
+        assertEquals(3, propositions.size)
+        assertEquals(SuggestionsSources.Etat.PROPOSE, propositions.first().etat)
+        assertEquals("Source", propositions.first().nom)
+        assertEquals(1, propositions.first().articles)
+        assertTrue(propositions.any { it.nom == "Page" && it.etat == SuggestionsSources.Etat.SANS_FLUX })
+        assertTrue(propositions.any { it.nom == "Absent" && it.etat == SuggestionsSources.Etat.SANS_FLUX })
+        assertFalse(propositions.any { it.nom == "Deja suivie" })
     }
 
     @Test

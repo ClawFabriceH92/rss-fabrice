@@ -397,8 +397,11 @@ fun AppRoot(
                         title = {
                             Text(
                                 when (ecran) {
-                                    is Ecran.Reglages ->
-                                        if (ongletReglages == 1) "Flux en erreur" else "Paramétrage"
+                                    is Ecran.Reglages -> when (ongletReglages) {
+                                        1 -> "Flux en erreur"
+                                        2 -> "Suggestions"
+                                        else -> "Paramétrage"
+                                    }
                                     is Ecran.Ia -> "IA"
                                     else -> selection.titre
                                 },

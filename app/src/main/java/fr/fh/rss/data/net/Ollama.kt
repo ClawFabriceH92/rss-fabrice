@@ -135,6 +135,13 @@ class Ollama {
         consigne: String,
         contenu: String,
         nombreTokens: Int = 500,
+        /**
+         * Coupe le raisonnement étendu des modèles qui le pratiquent (qwen3.8…) :
+         * sans cela ils consomment tout le quota de tokens en réflexion et
+         * renvoient un contenu vide (constaté le 09/11/2026, `done_reason=length`).
+         * Les serveurs qui ne connaissent pas ce champ l'ignorent.
+         */
+        reflexion: Boolean = false,
     ): String {
         if (contenu.isBlank()) throw IOException("rien à analyser")
         val charge = JSONObject().apply {
@@ -147,6 +154,7 @@ class Ollama {
                 },
             )
             put("stream", false)
+            put("think", reflexion)
             put("options", JSONObject().put("temperature", 0.2).put("num_predict", nombreTokens))
         }
         val requete = Request.Builder()

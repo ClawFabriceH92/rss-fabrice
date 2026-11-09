@@ -212,10 +212,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _themeCatalogue = MutableStateFlow(fr.fh.rss.data.net.CatalogueSources.THEMES.first())
 
-    /** Sources du catalogue pour le thème courant, moins celles déjà suivies. */
+    /** Mots-clés saisis dans l'onglet Suggestions : filtrent le catalogue et orientent le modèle. */
+    private val _motsCles = MutableStateFlow("")
+    val motsCles: StateFlow<String> = _motsCles.asStateFlow()
+
+    /**
+     * Sources du catalogue pour le thème courant, moins celles déjà suivies, puis
+     * filtrées par les mots-clés. Un thème sans résultat ne vide pas l'écran : les
+     * sources des autres thèmes qui correspondent aux mots-clés restent visibles.
+     */
     val catalogueSources: StateFlow<List<fr.fh.rss.data.net.CatalogueSources.Entree>> =
-        combine(sources, _themeCatalogue) { feeds, theme ->
-            fr.fh.rss.data.net.CatalogueSources.nonSuivies(feeds.map { it.url }, theme)
+        combine(sources, _themeCatalogue, _motsCles) { feeds, theme, mots ->
+            val suivies = feeds.map { it.url }
+            val duTheme = fr.fh.rss.data.net.CatalogueSources.nonSuivies(suivies, theme)
+            val filtre = fr.fh.rss.data.net.CatalogueSources.filtrer(duTheme, mots)
+            if (filtre.isEmpty() && mots.isNotBlank()) {
+                fr.fh.rss.data.net.CatalogueSources.filtrer(
+                    fr.fh.rss.data.net.CatalogueSources.nonSuivies(suivies),
+                    mots,
+                )
+            } else {
+                filtre
+            }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val themesCatalogue: List<String> = fr.fh.rss.data.net.CatalogueSources.THEMES
@@ -388,6 +406,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (theme in themesCatalogue) _themeCatalogue.value = theme
     }
 
+    fun setMotsCles(saisie: String) {
+        _motsCles.value = saisie
+    }
+
     /**
      * Le modèle choisit dans le catalogue embarqué : les adresses sont déjà
      * vérifiées, il ne peut donc rien inventer. Il ne renvoie que des numéros,
@@ -400,7 +422,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _suggestionsErreur.value = null
             val courant = reglages.value
             val suivies = sources.value
-            val candidats = fr.fh.rss.data.net.CatalogueSources.nonSuivies(suivies.map { it.url })
+            val mots = _motsCles.value
+            val tous = fr.fh.rss.data.net.CatalogueSources.nonSuivies(suivies.map { it.url })
+            // Les mots-clés restreignent les candidats quand ils désignent quelque chose,
+            // sinon le modèle choisirait dans tout le catalogue sans tenir compte de l'écran.
+            val candidats = fr.fh.rss.data.net.CatalogueSources.filtrer(tous, mots)
+                .ifEmpty { tous }
             if (candidats.isEmpty()) {
                 _suggestionsErreur.value = "Toutes les sources du catalogue sont déjà suivies."
                 _suggestionsEnCours.value = false
@@ -410,7 +437,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val reponse = ollama.demander(
                     base = courant.ollamaUrl,
                     modele = courant.ollamaModele,
-                    consigne = fr.fh.rss.data.net.CatalogueSources.consigne(candidats),
+                    consigne = fr.fh.rss.data.net.CatalogueSources.consigne(candidats, motsCles = mots),
                     contenu = fr.fh.rss.data.net.SuggestionsSources.contenu(
                         suivies.map { it.title to it.url },
                     ),

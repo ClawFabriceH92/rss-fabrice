@@ -116,6 +116,41 @@ object CatalogueSources {
             .filter { cle(it.url) !in connues }
     }
 
+    /** Sens de comparaison : minuscules et sans accents (« économique » = « economique »). */
+    fun normaliser(texte: String): String {
+        val sansAccent = java.text.Normalizer.normalize(texte, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+        return sansAccent.lowercase()
+    }
+
+    /** Mots-clés saisis par l'utilisateur : séparés par des virgules ou des espaces. */
+    fun decouperMotsCles(saisie: String): List<String> =
+        normaliser(saisie)
+            .split(',', ';', '/', '\n')
+            .flatMap { it.split(' ') }
+            .map { it.trim() }
+            .filter { it.length >= 2 }
+            .distinct()
+
+    /**
+     * Filtre le catalogue par mots-clés : un mot est cherché dans le nom, le thème
+     * et l'adresse. Plusieurs mots se cumulent en « l'un ou l'autre », et les
+     * entrées qui en contiennent le plus remontent en tête. Sans mot-clé, la liste
+     * est rendue telle quelle.
+     */
+    fun filtrer(entrees: List<Entree>, saisie: String): List<Entree> {
+        val mots = decouperMotsCles(saisie)
+        if (mots.isEmpty()) return entrees
+        return entrees
+            .map { entree ->
+                val cible = normaliser(entree.nom + " " + entree.theme + " " + entree.url)
+                entree to mots.count { cible.contains(it) }
+            }
+            .filter { it.second > 0 }
+            .sortedByDescending { it.second }
+            .map { it.first }
+    }
+
     /** Nombre d'entrées par thème, pour les libellés de filtre. */
     fun compteParTheme(): Map<String, Int> = entrees.groupingBy { it.theme }.eachCount()
 
@@ -124,14 +159,24 @@ object CatalogueSources {
      * répondre par les numéros. Un numéro est vérifiable, un nom recopié ne
      * l'est pas (un petit modèle le déforme).
      */
-    fun consigne(candidats: List<Entree>, nombre: Int = 8): String = buildString {
+    fun consigne(
+        candidats: List<Entree>,
+        nombre: Int = 8,
+        /** Centres d'intérêt saisis par l'utilisateur ; ignorés s'ils sont vides. */
+        motsCles: String = "",
+    ): String = buildString {
         appendLine("Voici un catalogue de sources d'information numérotées :")
         candidats.forEachIndexed { i, e -> appendLine("${i + 1}. ${e.nom} (thème : ${e.theme})") }
         appendLine()
+        val interets = motsCles.trim()
+        if (interets.isNotEmpty()) {
+            appendLine("L'utilisateur s'intéresse particulièrement à : $interets.")
+        }
         append(
             "Choisis les $nombre sources les plus utiles pour quelqu'un qui suit déjà les " +
-                "sources listées par l'utilisateur. Réponds uniquement par les numéros, " +
-                "séparés par des virgules, sans texte autour.",
+                "sources listées par l'utilisateur" +
+                (if (interets.isNotEmpty()) ", en privilégiant ses centres d'intérêt" else "") +
+                ". Réponds uniquement par les numéros, séparés par des virgules, sans texte autour.",
         )
     }
 

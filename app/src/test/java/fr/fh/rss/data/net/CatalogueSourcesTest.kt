@@ -95,6 +95,55 @@ class CatalogueSourcesTest {
     }
 
     @Test
+    fun `les mots-cles filtrent le catalogue sans tenir compte des accents ni de la casse`() {
+        val compta = CatalogueSources.parTheme("Compta et audit")
+        val filtre = CatalogueSources.filtrer(CatalogueSources.entrees, "EXPERTS-COMPTABLES")
+        assertTrue(filtre.any { it.nom.contains("Ordre des experts") })
+
+        // « economie » retrouve le thème « Économie » malgré l'accent.
+        val economie = CatalogueSources.filtrer(CatalogueSources.entrees, "economie")
+        assertTrue(economie.isNotEmpty())
+        assertTrue(economie.all { CatalogueSources.normaliser(it.theme + it.nom).isNotEmpty() })
+        assertTrue(compta.isNotEmpty())
+    }
+
+    @Test
+    fun `plusieurs mots-cles fonctionnent en l'un ou l'autre`() {
+        val filtre = CatalogueSources.filtrer(CatalogueSources.entrees, "kotlin, IFRS")
+        assertTrue(filtre.any { it.nom.contains("Kotlin") })
+        assertTrue(filtre.size >= 1)
+    }
+
+    @Test
+    fun `sans mot-cle la liste est rendue telle quelle`() {
+        assertEquals(CatalogueSources.entrees, CatalogueSources.filtrer(CatalogueSources.entrees, "   "))
+        assertEquals(CatalogueSources.entrees, CatalogueSources.filtrer(CatalogueSources.entrees, ""))
+    }
+
+    @Test
+    fun `un mot-cle inconnu ne rend rien plutot que tout`() {
+        assertTrue(CatalogueSources.filtrer(CatalogueSources.entrees, "zzzzqqq").isEmpty())
+    }
+
+    @Test
+    fun `les mots-cles sont decoupes sur les virgules et les espaces`() {
+        assertEquals(
+            listOf("ifrs", "tva", "kotlin"),
+            CatalogueSources.decouperMotsCles("IFRS, TVA kotlin"),
+        )
+        // Un mot d'une lettre est ignoré : il filtrerait n'importe quoi.
+        assertEquals(listOf("tva"), CatalogueSources.decouperMotsCles("a tva"))
+    }
+
+    @Test
+    fun `les mots-cles sont transmis au modele`() {
+        val candidats = CatalogueSources.entrees.take(3)
+        val consigne = CatalogueSources.consigne(candidats, 4, motsCles = "IFRS, TVA")
+        assertTrue(consigne, consigne.contains("IFRS, TVA"))
+        assertTrue(consigne, consigne.contains("4 sources"))
+    }
+
+    @Test
     fun `la consigne numerote le catalogue et demande des numeros`() {
         val candidats = CatalogueSources.entrees.take(3)
         val consigne = CatalogueSources.consigne(candidats, 2)

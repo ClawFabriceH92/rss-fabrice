@@ -86,6 +86,7 @@ fun EcranReglages(
     val themeCatalogue by vm.themeCatalogue.collectAsState()
     val nettoyage by vm.nettoyage.collectAsState()
     val nettoyageEnCours by vm.nettoyageEnCours.collectAsState()
+    val motsCles by vm.motsCles.collectAsState()
     // Réduction d'archive en attente de confirmation.
     var reductionEnAttente by remember { androidx.compose.runtime.mutableStateOf<ApercuArchive?>(null) }
     var urlSaisie by remember(reglages.ollamaUrl) {
@@ -169,6 +170,8 @@ fun EcranReglages(
                     themes = vm.themesCatalogue,
                     theme = themeCatalogue,
                     onTheme = { vm.setThemeCatalogue(it) },
+                    motsCles = motsCles,
+                    onMotsCles = { vm.setMotsCles(it) },
                     propositions = suggestions,
                     enCours = suggestionsEnCours,
                     erreur = suggestionsErreur,

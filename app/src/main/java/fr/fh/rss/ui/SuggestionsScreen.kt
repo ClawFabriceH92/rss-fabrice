@@ -19,6 +19,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -46,6 +47,8 @@ fun EcranSuggestions(
     themes: List<String>,
     theme: String,
     onTheme: (String) -> Unit,
+    motsCles: String,
+    onMotsCles: (String) -> Unit,
     propositions: List<SuggestionsSources.Proposition>,
     enCours: Boolean,
     erreur: String?,
@@ -70,6 +73,24 @@ fun EcranSuggestions(
                         "à ta place selon les sources que tu suis déjà.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = motsCles,
+                    onValueChange = onMotsCles,
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                    singleLine = true,
+                    label = { Text("Mots-clés (facultatif)") },
+                    placeholder = { Text("IFRS, TVA, facture électronique, Kotlin…") },
+                    supportingText = {
+                        Text(
+                            if (motsCles.isBlank()) {
+                                "Filtre la liste, et oriente le choix du modèle."
+                            } else {
+                                "${catalogue.size} source(s) correspondent, dans tous les thèmes si besoin."
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    },
                 )
                 FlowRow(
                     Modifier.fillMaxWidth().padding(top = 8.dp),

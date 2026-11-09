@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -149,45 +150,66 @@ object UpdateManager {
         }
     }
 
+    /** Réponse HTTP en échec : le code décide s'il vaut la peine de retenter. */
+    private class ReponseEnEchec(val code: Int) : java.io.IOException(Reessai.raison(code))
+
     private suspend fun fetch(context: Context, version: String, url: String): File =
         withContext(Dispatchers.IO) {
             val dossier = File(context.filesDir, DIR).apply { mkdirs() }
-            dossier.listFiles()?.forEach { it.delete() }
             val cible = File(dossier, "rss-fabrice-v$version.apk")
+            var derniere: Throwable? = null
+            // Le CDN GitHub répond parfois 502/503/504 sur les assets : sans réessai,
+            // l'application annonçait « mise à jour impossible » sur un incident passager.
+            for (essai in 1..Reessai.TENTATIVES) {
+                dossier.listFiles()?.forEach { it.delete() }
+                try {
+                    return@withContext telecharger(cible, version, url)
+                } catch (e: ReponseEnEchec) {
+                    if (!Reessai.reessayable(e.code) || essai == Reessai.TENTATIVES) throw e
+                    derniere = e
+                } catch (e: java.io.IOException) {
+                    if (essai == Reessai.TENTATIVES) throw e
+                    derniere = e
+                }
+                delay(Reessai.pauseMs(essai))
+            }
+            throw derniere ?: java.io.IOException("téléchargement impossible")
+        }
 
-            val requete = Request.Builder().url(url).get().build()
-            http.newCall(requete).execute().use { reponse ->
-                if (!reponse.isSuccessful) error("HTTP ${reponse.code}")
-                val corps = reponse.body ?: error("Corps vide")
-                val total = corps.contentLength()
-                var ecrit = 0L
-                corps.byteStream().use { entree ->
-                    cible.outputStream().use { sortie ->
-                        val tampon = ByteArray(64 * 1024)
-                        var lu = entree.read(tampon)
-                        while (lu != -1) {
-                            sortie.write(tampon, 0, lu)
-                            ecrit += lu
-                            if (total > 0) {
-                                _state.value = State.Downloading(
-                                    version,
-                                    (ecrit.toFloat() / total).coerceIn(0f, 1f),
-                                )
-                            }
-                            lu = entree.read(tampon)
+    private fun telecharger(cible: File, version: String, url: String): File {
+        val requete = Request.Builder().url(url).get().build()
+        http.newCall(requete).execute().use { reponse ->
+            if (!reponse.isSuccessful) throw ReponseEnEchec(reponse.code)
+            val corps = reponse.body ?: throw java.io.IOException("corps vide")
+            val total = corps.contentLength()
+            var ecrit = 0L
+            corps.byteStream().use { entree ->
+                cible.outputStream().use { sortie ->
+                    val tampon = ByteArray(64 * 1024)
+                    var lu = entree.read(tampon)
+                    while (lu != -1) {
+                        sortie.write(tampon, 0, lu)
+                        ecrit += lu
+                        if (total > 0) {
+                            _state.value = State.Downloading(
+                                version,
+                                (ecrit.toFloat() / total).coerceIn(0f, 1f),
+                            )
                         }
+                        lu = entree.read(tampon)
                     }
                 }
             }
-            if (cible.length() == 0L) error("Téléchargement vide")
-            val entete = ByteArray(2)
-            cible.inputStream().use { it.read(entete) }
-            if (String(entete) != "PK") {
-                cible.delete()
-                error("fichier téléchargé invalide (ce n'est pas un APK)")
-            }
-            cible
         }
+        if (cible.length() == 0L) throw java.io.IOException("téléchargement vide")
+        val entete = ByteArray(2)
+        cible.inputStream().use { it.read(entete) }
+        if (String(entete) != "PK") {
+            cible.delete()
+            throw java.io.IOException("fichier téléchargé invalide (ce n'est pas un APK)")
+        }
+        return cible
+    }
 
     /**
      * Installe l'APK téléchargé. Sans l'autorisation système

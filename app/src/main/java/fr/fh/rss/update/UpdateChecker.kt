@@ -77,6 +77,25 @@ object UpdateChecker {
     }
 
     private fun fetch(url: String, github: Boolean): String {
+        var derniere: Throwable? = null
+        for (essai in 1..Reessai.TENTATIVES) {
+            try {
+                return fetchUneFois(url, github)
+            } catch (e: HttpStatusException) {
+                // 5xx = CDN surchargé : on retente. 403/404 sont définitifs.
+                if (!Reessai.reessayable(e.code) || essai == Reessai.TENTATIVES) throw e
+                derniere = e
+            } catch (e: IOException) {
+                if (essai == Reessai.TENTATIVES) throw e
+                derniere = e
+            }
+            // fetch est appelé depuis Dispatchers.IO : l'attente ne bloque pas l'interface.
+            Thread.sleep(Reessai.pauseMs(essai))
+        }
+        throw derniere ?: IOException("échec inconnu")
+    }
+
+    private fun fetchUneFois(url: String, github: Boolean): String {
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.connectTimeout = TIMEOUT_MS
@@ -102,7 +121,7 @@ object UpdateChecker {
             "quota GitHub épuisé pour cette adresse IP"
         code == HttpURLConnection.HTTP_FORBIDDEN -> "accès refusé par GitHub (HTTP 403)"
         code == HttpURLConnection.HTTP_NOT_FOUND -> "ressource absente (HTTP 404)"
-        else -> "HTTP $code"
+        else -> Reessai.raison(code)
     }
 
     internal fun describe(e: Throwable): String = when (e) {

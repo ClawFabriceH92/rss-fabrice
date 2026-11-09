@@ -7,6 +7,7 @@ import fr.fh.rss.RssApp
 import fr.fh.rss.data.ApercuArchive
 import fr.fh.rss.data.Avertissements
 import fr.fh.rss.data.LectureOpml
+import fr.fh.rss.data.Nettoyage
 import fr.fh.rss.data.Filtre
 import fr.fh.rss.data.Regroupement
 import fr.fh.rss.data.Reglages
@@ -221,6 +222,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val themeCatalogue: StateFlow<String> = _themeCatalogue.asStateFlow()
 
     private var collecteFaite = false
+
+    // ------------------------------------------------------------- nettoyage
+    private val _nettoyage = MutableStateFlow<List<Nettoyage.Proposition>>(emptyList())
+    val nettoyage: StateFlow<List<Nettoyage.Proposition>> = _nettoyage.asStateFlow()
+
+    private val _nettoyageEnCours = MutableStateFlow(false)
+    val nettoyageEnCours: StateFlow<Boolean> = _nettoyageEnCours.asStateFlow()
+
+    /** Recalcule les sources proposées au retrait (appelé à l'ouverture de l'onglet). */
+    fun analyserNettoyage() {
+        if (_nettoyageEnCours.value) return
+        viewModelScope.launch {
+            _nettoyageEnCours.value = true
+            _nettoyage.value = runCatching { depot.propositionsNettoyage() }.getOrDefault(emptyList())
+            _nettoyageEnCours.value = false
+        }
+    }
 
     // ------------------------------------------------------------ actions
 
@@ -497,6 +515,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val favoris = nombreFavoris(feedIds)
             val supprimees = runCatching { depot.deleteFeeds(feedIds) }.getOrDefault(0)
+            // Les propositions de nettoyage qui viennent d'être traitées disparaissent.
+            _nettoyage.value = _nettoyage.value.filterNot { it.id in feedIds }
             val filtre = _selection.value.filtre
             if (filtre is Filtre.Flux && filtre.id in feedIds) {
                 _selection.value = SELECTION_PAR_DEFAUT

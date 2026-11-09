@@ -350,6 +350,17 @@ class FeedRepository(
                 .sortedBy { it.errorSince ?: Long.MAX_VALUE }
         }
 
+    /**
+     * Sources que l'application propose de retirer (onglet « Nettoyage ») :
+     * échec prolongé, silence de plus d'un an, ou aucun article depuis l'ajout.
+     */
+    suspend fun propositionsNettoyage(): List<Nettoyage.Proposition> = withContext(Dispatchers.IO) {
+        val sources = feedDao.all()
+        if (sources.isEmpty()) return@withContext emptyList()
+        val dernier = articleDao.dernierArticleParSource().associate { it.feedId to it.dernier }
+        Nettoyage.propositions(sources, dernier)
+    }
+
     /** Sources en échec, quelle que soit l'ancienneté de la série. */
     suspend fun sourcesEnEchec(): List<FeedEntity> = withContext(Dispatchers.IO) {
         feedDao.all()

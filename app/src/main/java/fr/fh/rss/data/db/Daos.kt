@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import fr.fh.rss.data.model.DernierArticleParSource
 import fr.fh.rss.data.model.FeedUnread
 import fr.fh.rss.data.model.FolderUnread
 import kotlinx.coroutines.flow.Flow
@@ -128,6 +129,13 @@ interface ArticleDao {
     /** Guid déjà en base pour un flux : évite d'analyser le HTML d'un article connu. */
     @Query("SELECT guid FROM articles WHERE feedId = :feedId")
     suspend fun guids(feedId: Long): List<String>
+
+    /**
+     * Date du dernier article connu, par source. Sert à repérer les sources qui
+     * répondent encore mais ne publient plus (proposition de nettoyage).
+     */
+    @Query("SELECT feedId AS feedId, MAX(publishedAt) AS dernier FROM articles GROUP BY feedId")
+    suspend fun dernierArticleParSource(): List<DernierArticleParSource>
 
     // Les listes ne ramènent pas les corps : projection [ArticleLigne].
 

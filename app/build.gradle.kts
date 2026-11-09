@@ -37,8 +37,8 @@ android {
         applicationId = "fr.fh.rss"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "1.14.0"
+        versionCode = 23
+        versionName = "1.15.0"
         resourceConfigurations += listOf("fr")
     }
 

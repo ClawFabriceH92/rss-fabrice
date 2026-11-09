@@ -25,6 +25,9 @@ data class ParsedFeed(
 /** Compteur de non-lus par source. */
 data class FeedUnread(val feedId: Long, val nombre: Int)
 
+/** Dernier article connu d'une source (projection SQL), 0 s'il n'y en a aucun. */
+data class DernierArticleParSource(val feedId: Long, val dernier: Long)
+
 /** Compteur de non-lus par dossier (clé -1 = sans dossier). */
 data class FolderUnread(val folderId: Long, val nombre: Int)
 

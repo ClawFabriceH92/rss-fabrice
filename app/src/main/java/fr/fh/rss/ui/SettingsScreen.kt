@@ -27,8 +27,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -84,6 +84,8 @@ fun EcranReglages(
     val suggestionsErreur by vm.suggestionsErreur.collectAsState()
     val catalogueSources by vm.catalogueSources.collectAsState()
     val themeCatalogue by vm.themeCatalogue.collectAsState()
+    val nettoyage by vm.nettoyage.collectAsState()
+    val nettoyageEnCours by vm.nettoyageEnCours.collectAsState()
     // Réduction d'archive en attente de confirmation.
     var reductionEnAttente by remember { androidx.compose.runtime.mutableStateOf<ApercuArchive?>(null) }
     var urlSaisie by remember(reglages.ollamaUrl) {
@@ -100,7 +102,7 @@ fun EcranReglages(
     // Pas de Scaffold ni de barre ici : celle de l'écran principal porte déjà le
     // titre « Réglages » et la flèche de retour (sinon le mot s'affiche deux fois).
     Column(Modifier.fillMaxWidth()) {
-        TabRow(selectedTabIndex = onglet) {
+        ScrollableTabRow(selectedTabIndex = onglet, edgePadding = 0.dp) {
             Tab(
                 selected = onglet == 0,
                 onClick = { onOnglet(0) },
@@ -123,6 +125,16 @@ fun EcranReglages(
                 onClick = { onOnglet(2) },
                 text = { Text("Suggestions", maxLines = 1) },
             )
+            Tab(
+                selected = onglet == 3,
+                onClick = { onOnglet(3) },
+                text = {
+                    Text(
+                        if (nettoyage.isEmpty()) "Nettoyage" else "Nettoyage (${nettoyage.size})",
+                        maxLines = 1,
+                    )
+                },
+            )
         }
 
         if (onglet == 1) {
@@ -133,6 +145,18 @@ fun EcranReglages(
                     onReessayerTout = { ids -> vm.reessayerToutesLesSources(ids) },
                     onSupprimer = { onDemanderSuppression(listOf(it)) },
                     onSupprimerTout = { ids -> onDemanderSuppression(ids) },
+                )
+            }
+            return@Column
+        }
+
+        if (onglet == 3) {
+            Column(Modifier.fillMaxWidth().weight(1f)) {
+                EcranNettoyage(
+                    propositions = nettoyage,
+                    enCours = nettoyageEnCours,
+                    onAnalyser = { vm.analyserNettoyage() },
+                    onSupprimer = { ids -> onDemanderSuppression(ids) },
                 )
             }
             return@Column

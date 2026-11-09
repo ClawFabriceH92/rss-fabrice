@@ -400,6 +400,7 @@ fun AppRoot(
                                     is Ecran.Reglages -> when (ongletReglages) {
                                         1 -> "Flux en erreur"
                                         2 -> "Suggestions"
+                                        3 -> "Nettoyage"
                                         else -> "Paramétrage"
                                     }
                                     is Ecran.Ia -> "IA"
